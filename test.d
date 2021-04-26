@@ -93,16 +93,19 @@ void main()
 
 	enum numSamples = 16;
 
-	float[1][numSamples] inputs, labels;
+	float[2][numSamples] inputs;
+	float[1][numSamples] labels;
 	foreach (i; 0 .. numSamples)
 	{
 		inputs[i][0] = uniform01!float();
-		labels[i][0] = inputs[i][0] * 3 + 4;
+		inputs[i][1] = uniform01!float();
+
+		labels[i][0] = inputs[i][0] * 2 + inputs[i][1] * 3 + 5;
 	}
 
 	struct Model
 	{
-		Dense!(float, 1, 1) d;
+		Dense!(float, 2, 1) d;
 	}
 	Model m;
 	foreach (ref layer; m.tupleof)
