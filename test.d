@@ -48,7 +48,7 @@ struct Dense(T, size_t numInputs, size_t numOutputs)
 			biases[o].accummulateGradient(gradient);
 			foreach (i; 0 .. numInputs)
 			{
-				weights[i][o].accummulateGradient(gradient * inputs[i]);
+				weights[o][i].accummulateGradient(gradient * inputs[i]);
 			}
 		}
 	}
