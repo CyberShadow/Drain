@@ -157,7 +157,7 @@ void initialize(Layer)(ref Layer layer)
 
 	void visitor(ref Variable!T p)
 	{
-		p.value = uniform01!T;
+		p.value = uniform01!T * 2 - 1;
 	}
 	layer.visit(&visitor);
 }
@@ -174,9 +174,9 @@ void applyGradients(Layer)(ref Layer layer)
 
 void main()
 {
-	rndGen.seed(1);
+	rndGen.seed(0);
 
-	enum numSamples = 16;
+	enum numSamples = 4;
 
 	float[2][numSamples] inputs;
 	float[1][numSamples] labels;
@@ -187,16 +187,25 @@ void main()
 
 		// labels[i][0] = inputs[i][0] * 2 + inputs[i][1] * 3 + 5;
 		// labels[i][0] = inputs[i][0] < inputs[i][1] ? 0 : 1;
-		if ((inputs[i][0] < inputs[i][1]) != (i % 2))
-			swap(inputs[i][0], inputs[i][1]);
-		labels[i][0] = i % 2;
+		inputs[i][0] = i % 2;
+		inputs[i][1] = i / 2 % 2;
+		labels[i][0] = inputs[i][0] != inputs[i][1];
 	}
 
+	struct Vars
+	{
+		Variable!float[2] v0;
+		Variable!float[4] v1;
+		Variable!float[4] v2;
+		Variable!float[1] v3;
+	}
 	struct Model
 	{
-		Dense!(float, 2, 1) d;
-		Sigmoid!(float, 1) s;
+		Dense!(float, Vars.tupleof[0].length, Vars.tupleof[1].length) l1;
+		ReLU !(float, Vars.tupleof[1].length                        ) l2;
+		Dense!(float, Vars.tupleof[2].length, Vars.tupleof[3].length) l3;
 	}
+
 	Model m;
 	foreach (ref layer; m.tupleof)
 		layer.initialize();
@@ -212,7 +221,7 @@ void main()
 	writeln;
 	writeln("---------------------------------------------------");
 
-	enum numEpochs = 100;
+	enum numEpochs = 1000;
 	foreach (epoch; 0 .. numEpochs)
 	{
 		// auto learningRate = (2.0 / numEpochs) * (numEpochs - epoch) / numEpochs;
@@ -222,18 +231,18 @@ void main()
 
 		foreach (s; 0 .. numSamples)
 		{
-			Variable!float[2] input = inputs[s].amap!variable;
-			Variable!float[1] hidden, output;
+			Vars vars;
 
-			m.d.forward(input, hidden);
-			m.s.forward(hidden, output);
+			vars.tupleof[0] = inputs[s].amap!variable;
+			static foreach (i; 0 .. Model.tupleof.length)
+				m.tupleof[i].forward(vars.tupleof[i], vars.tupleof[i + 1]);
 
 			// writef("%1.4f\t", hidden[0].value);
-			foreach (o; 0 .. output.length)
-				output[o].setGradient(labels[s][o], learningRate);
+			foreach (o; 0 .. vars.tupleof[$-1].length)
+				vars.tupleof[$-1][o].setGradient(labels[s][o], learningRate);
 
-			m.s.backward(hidden, output);
-			m.d.backward(input, hidden);
+			static foreach_reverse (i; 0 .. Model.tupleof.length)
+				m.tupleof[i].backward(vars.tupleof[i], vars.tupleof[i + 1]);
 		}
 		// writefln("\t%s\t%s", m.d.weights, m.d.biases);
 
@@ -241,18 +250,19 @@ void main()
 			layer.applyGradients();
 	}
 
-	writeln(m.d.weights);
-	writeln(m.d.biases);
+	writeln(m.l1.weights);
+	writeln(m.l1.biases);
 	// d.weights[0][0] = 3;
 	// d.biases[0] = 4;
 
 	foreach (s; 0 .. numSamples)
 	{
-		auto input = inputs[s].amap!variable;
-		Variable!float[1] hidden, output;
-		m.d.forward(input, hidden);
-		m.s.forward(hidden, output);
-		writeln(input.amap!value, " => ", output.amap!value, " / ", labels[s]);
+		Vars vars;
+		vars.tupleof[0] = inputs[s].amap!variable;
+		static foreach (i; 0 .. Model.tupleof.length)
+			m.tupleof[i].forward(vars.tupleof[i], vars.tupleof[i + 1]);
+
+		writeln(vars.tupleof[0].amap!value, " => ", vars.tupleof[$-1].amap!value, " / ", labels[s]);
 	}
 
 	// d.weights
