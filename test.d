@@ -278,54 +278,31 @@ void applyGradients(Layer)(ref Layer layer)
 	layer.visit(&visitor);
 }
 
-void main()
+debug = verbose;
+
+version (unittest)
+void testProblem(Model, size_t numInputs, size_t numOutputs)(float[numInputs][] inputs, float[numOutputs][] labels)
 {
-	rndGen.seed(0);
-
-	enum numSamples = 4;
-
-	float[2][numSamples] inputs;
-	float[1][numSamples] labels;
-	foreach (i; 0 .. numSamples)
-	{
-		inputs[i][0] = uniform01!float();
-		inputs[i][1] = uniform01!float();
-
-		// labels[i][0] = inputs[i][0] * 2 + inputs[i][1] * 3 + 5;
-		// labels[i][0] = inputs[i][0] < inputs[i][1] ? 0 : 1;
-		inputs[i][0] = i % 2;
-		inputs[i][1] = i / 2 % 2;
-		labels[i][0] = inputs[i][0] != inputs[i][1];
-	}
-
-	struct Vars
-	{
-		DenseArray!(float, Shape([2])) v0;
-		DenseArray!(float, Shape([4])) v1;
-		DenseArray!(float, Shape([4])) v2;
-		DenseArray!(float, Shape([1])) v3;
-	}
-	struct Model
-	{
-		LinearDense!(float, Vars.v0.shape, Vars.v1.shape) l1;
-		ReLU       !(float                              ) l2;
-		LinearDense!(float, Vars.v2.shape, Vars.v3.shape) l3;
-	}
+	assert(inputs.length == labels.length);
+	auto numSamples = inputs.length;
 
 	Model m;
 	foreach (ref layer; m.tupleof)
 		layer.initialize();
 
-	foreach (i; 0 .. inputs[0].length)
+	debug (verbose)
 	{
+		foreach (i; 0 .. inputs[0].length)
+		{
+			foreach (s; 0 .. numSamples)
+				writef("%1.4f\t", inputs[s][i]);
+			writeln;
+		}
 		foreach (s; 0 .. numSamples)
-			writef("%1.4f\t", inputs[s][i]);
+			writef("%1.4f\t", labels[s][0]);
 		writeln;
+		writeln("---------------------------------------------------");
 	}
-	foreach (s; 0 .. numSamples)
-		writef("%1.4f\t", labels[s][0]);
-	writeln;
-	writeln("---------------------------------------------------");
 
 	enum numEpochs = 1000;
 	foreach (epoch; 0 .. numEpochs)
@@ -337,7 +314,7 @@ void main()
 
 		foreach (s; 0 .. numSamples)
 		{
-			Vars vars;
+			Model.Vars vars;
 
 			vars.tupleof[0].valueIterator = inputs[s].amap!variable;
 			static foreach (i; 0 .. Model.tupleof.length)
@@ -356,20 +333,153 @@ void main()
 			layer.applyGradients();
 	}
 
-	writeln(m.l1.weights);
-	writeln(m.l1.biases);
-	// d.weights[0][0] = 3;
-	// d.biases[0] = 4;
+	debug (verbose)
+	{
+		writeln(m.l1.weights);
+		writeln(m.l1.biases);
+	}
 
 	foreach (s; 0 .. numSamples)
 	{
-		Vars vars;
+		Model.Vars vars;
+
+		auto input = &vars.tupleof[0];
 		vars.tupleof[0].valueIterator = inputs[s].amap!variable;
+
 		static foreach (i; 0 .. Model.tupleof.length)
 			m.tupleof[i].forward(vars.tupleof[i], vars.tupleof[i + 1]);
 
-		writeln(vars.tupleof[0].valueIterator.amap!value, " => ", vars.tupleof[$-1].valueIterator.amap!value, " / ", labels[s]);
+		auto output = &vars.tupleof[$-1];
+		debug (verbose) writeln(input.valueIterator.amap!value, " => ", output.valueIterator.amap!value, " / ", labels[s]);
+		assert(round(output.value[0].value.value) == round(labels[s][0]));
 	}
 
-	// d.weights
+	debug (verbose)
+		writeln("===============================================================================================");
+}
+
+/// Simple add+multiply (one layer, one input, one output, one bias, one weight)
+unittest
+{
+	rndGen.seed(0);
+
+	enum numSamples = 16;
+
+	float[1][numSamples] inputs;
+	float[1][numSamples] labels;
+	foreach (i; 0 .. numSamples)
+	{
+		inputs[i] = [uniform01!float];
+		labels[i] = [inputs[i][0] * 3f + 4f];
+	}
+
+	struct Model
+	{
+		struct Vars
+		{
+			DenseArray!(float, Shape([1])) v0;
+			DenseArray!(float, Shape([1])) v1;
+		}
+
+		LinearDense!(float, Vars.v0.shape, Vars.v1.shape) l1;
+	}
+
+	testProblem!Model(inputs, labels);
+}
+
+/// Simple add+multiply of two inputs (one layer, two inputs, one output, one bias, two weights)
+unittest
+{
+	rndGen.seed(0);
+
+	enum numSamples = 16;
+
+	float[2][numSamples] inputs;
+	float[1][numSamples] labels;
+	foreach (i; 0 .. numSamples)
+	{
+		inputs[i] = [uniform01!float, uniform01!float];
+		labels[i] = [inputs[i][0] * 3f + inputs[i][1] * 4f + 5f];
+	}
+
+	struct Model
+	{
+		struct Vars
+		{
+			DenseArray!(float, Shape([2])) v0;
+			DenseArray!(float, Shape([1])) v1;
+		}
+
+		LinearDense!(float, Vars.v0.shape, Vars.v1.shape) l1;
+	}
+
+	testProblem!Model(inputs, labels);
+}
+
+/// Sigmoid test (comparison of two numbers)
+unittest
+{
+	rndGen.seed(1);
+
+	enum numSamples = 16;
+
+	float[2][numSamples] inputs;
+	float[1][numSamples] labels;
+	foreach (i; 0 .. numSamples)
+	{
+		inputs[i] = [uniform01!float, uniform01!float];
+		if ((inputs[i][0] < inputs[i][1]) != (i % 2))
+			swap(inputs[i][0], inputs[i][1]);
+		labels[i][0] = i % 2;
+	}
+
+	struct Model
+	{
+		struct Vars
+		{
+			DenseArray!(float, Shape([2])) v0;
+			DenseArray!(float, Shape([1])) v1;
+			DenseArray!(float, Shape([1])) v2;
+		}
+
+		LinearDense!(float, Vars.v0.shape, Vars.v1.shape) l1;
+		Sigmoid    !(float                              ) l2;
+	}
+
+	testProblem!Model(inputs, labels);
+}
+
+/// XOR problem
+unittest
+{
+	// We're using few units and non-leaky
+	// ReLUs, so the seed is important
+	rndGen.seed(5);
+
+	enum numSamples = 4;
+
+	float[2][numSamples] inputs;
+	float[1][numSamples] labels;
+	foreach (i; 0 .. numSamples)
+	{
+		inputs[i] = [i % 2, i / 2 % 2];
+		labels[i] = [inputs[i][0] != inputs[i][1]];
+	}
+
+	struct Model
+	{
+		struct Vars
+		{
+			DenseArray!(float, Shape([2])) v0;
+			DenseArray!(float, Shape([4])) v1;
+			DenseArray!(float, Shape([4])) v2;
+			DenseArray!(float, Shape([1])) v3;
+		}
+
+		LinearDense!(float, Vars.v0.shape, Vars.v1.shape) l1;
+		ReLU       !(float                              ) l2;
+		LinearDense!(float, Vars.v2.shape, Vars.v3.shape) l3;
+	}
+
+	testProblem!Model(inputs, labels);
 }
