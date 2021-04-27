@@ -1,12 +1,76 @@
 import std.algorithm.mutation;
+import std.algorithm.searching;
 import std.math;
 import std.random;
+import std.range.primitives;
 import std.stdio;
 import std.traits;
 
 import ae.utils.array;
 
 private:
+
+struct Shape
+{
+	size_t[] dims;
+
+	@property size_t count()
+	{
+		size_t result = 1;
+		foreach (dim; dims)
+			result *= dim;
+		return result;
+	}
+
+	// Shape cartesianProduct(Shape other) const
+	// {
+	// 	return Shape(dims ~ other.dims);
+	// }
+}
+
+// template StaticArray(T, Shape shape)
+// {
+// 	static if (shape.dims.length == 0)
+// 		alias StaticArray = T;
+// 	else
+// 		alias StaticArray = StaticArray!(T, Shape(shape.dims[1 .. $]))[shape.dims[0]];
+// }
+
+struct Index(Shape _shape)
+{
+	enum shape = _shape;
+	size_t[shape.dims.length] indices;
+	alias indices this;
+
+	auto opBinary(string op : "~", Shape otherShape)(Index!otherShape otherIndex) @nogc
+	{
+		enum Shape newShape = Shape(shape.dims ~ otherShape.dims);
+		size_t[newShape.dims.length] newIndices;
+		newIndices[0 .. indices.length] = indices;
+		newIndices[indices.length .. $] = otherIndex.indices;
+		return Index!newShape(newIndices);
+	}
+}
+
+struct ShapeIterator(Shape shape)
+{
+	Index!shape front;
+	bool empty;
+
+	void popFront()
+	{
+		foreach_reverse (dimIndex; 0 .. shape.dims.length)
+		{
+			if (++front.indices[dimIndex] == shape.dims[dimIndex])
+				front.indices[dimIndex] = 0;
+			else
+				return;
+		}
+		empty = true;
+	}
+}
+
+// -------------
 
 struct Variable(T)
 {
@@ -46,106 +110,148 @@ struct Variable(T)
 Variable!T variable(T)(T value) { return Variable!T(value); }
 T value(T)(Variable!T variable) { return variable.value; }
 
-struct LinearDense(T, size_t numInputs, size_t numOutputs)
+template isTensor(Tensor, T)
 {
-	Variable!T[numInputs][numOutputs] weights;
-	Variable!T[numOutputs] biases;
+	enum isTensor = is(typeof((*cast(Tensor*)null).valueIterator.front) == Variable!T);
+}
+
+// Tensor
+struct DenseArray(T, Shape _shape)
+{
+	enum shape = _shape;
+
+	// StaticArray!(Variable!T, shape) array;
+	static if (shape.dims.length == 0)
+		Variable!T value;
+	else
+		DenseArray!(T, Shape(shape.dims[1 .. $]))[shape.dims[0]] value;
+
+	enum count = shape.count;
+
+	@property ref Variable!T[count] valueIterator() inout
+	{
+		return *cast(Variable!T[count]*)&value;
+	}
+
+	auto indexIterator() const
+	{
+		return ShapeIterator!shape();
+	}
+
+	ref auto opIndex(Shape indexShape)(Index!indexShape index) inout
+	if (shape.dims.startsWith(indexShape.dims))
+	{
+		static if (indexShape.dims.length == 0)
+			return value;
+		else
+			return value[index.indices[0]][Index!(Shape(indexShape.dims[1 .. $]))(index.indices[1 .. $])];
+	}
+}
+static assert(isTensor!(DenseArray!(float, Shape([1])), float));
+
+struct LinearDense(T, Shape inputShape, Shape outputShape)
+{
+	DenseArray!(T, Shape(outputShape.dims ~ inputShape.dims)) weights;
+	DenseArray!(T, outputShape) biases;
 
 	void visit(void delegate(ref Variable!T p) cb)
 	{
-		foreach (ref r; weights)
-			foreach (ref v; r)
-				cb(v);
-		foreach (ref v; biases)
+		foreach (ref v; weights.valueIterator)
+			cb(v);
+		foreach (ref v; biases.valueIterator)
 			cb(v);
 	}
 
-	void forward(ref const Variable!T[numInputs] inputs, ref Variable!T[numOutputs] outputs)
+	void forward(InputTensor, OutputTensor)(ref const InputTensor inputs, ref OutputTensor outputs)
+	if (isTensor!(InputTensor , T) && InputTensor .shape == inputShape &&
+		isTensor!(OutputTensor, T) && OutputTensor.shape == outputShape)
 	{
-		foreach (i; 0 .. numOutputs)
+		foreach (i; outputs.indexIterator)
 			outputs[i].value = biases[i].value;
-		foreach (i; 0 .. numInputs)
-			foreach (o; 0 .. numOutputs)
-				outputs[o].value += inputs[i].value * weights[o][i].value;
+		foreach (i; inputs.indexIterator)
+			foreach (o; outputs.indexIterator)
+				outputs[o].value += inputs[i].value * weights[o~i].value;
 	}
 
-	void backward(ref Variable!T[numInputs] inputs, ref const Variable!T[numOutputs] outputs)
+	void backward(InputTensor, OutputTensor)(ref InputTensor inputs, ref const OutputTensor outputs)
+	if (isTensor!(InputTensor , T) && InputTensor .shape == inputShape &&
+		isTensor!(OutputTensor, T) && OutputTensor.shape == outputShape)
 	{
-		foreach (o; 0 .. numOutputs)
+		foreach (o; outputs.indexIterator)
 		{
 			auto gradient = outputs[o].gradient;
 			biases[o].accumulateGradient(gradient);
-			foreach (i; 0 .. numInputs)
-				weights[o][i].accumulateGradient(gradient * inputs[i].value);
+			foreach (i; inputs.indexIterator)
+				weights[o~i].accumulateGradient(gradient * inputs[i].value);
 		}
 
-		foreach (o; 0 .. numOutputs)
-			foreach (i; 0 .. numInputs)
-				inputs[i].accumulateGradient(outputs[o].gradient * weights[o][i].value);
+		foreach (o; outputs.indexIterator)
+			foreach (i; inputs.indexIterator)
+				inputs[i].accumulateGradient(outputs[o].gradient * weights[o~i].value);
 	}
 }
 
-struct Identity(T, size_t numInputs)
+struct Identity(T)
 {
-	alias numOutputs = numInputs;
-
 	void visit(void delegate(ref Variable!T p) cb)
 	{
 	}
 
-	void forward(ref const Variable!T[numInputs] inputs, ref Variable!T[numOutputs] outputs)
+	void forward(InputTensor, OutputTensor)(ref const InputTensor inputs, ref OutputTensor outputs)
+	if (isTensor!(InputTensor, T) && isTensor!(OutputTensor, T) && InputTensor.shape == OutputTensor.shape)
 	{
-		foreach (i; 0 .. numInputs)
+		foreach (i; inputs.indexIterator)
 			outputs[i].value = inputs[i].value;
 	}
 
-	void backward(ref Variable!T[numInputs] inputs, ref const Variable!T[numOutputs] outputs)
+	void backward(InputTensor, OutputTensor)(ref InputTensor inputs, ref const OutputTensor outputs)
+	if (isTensor!(InputTensor, T) && isTensor!(OutputTensor, T) && InputTensor.shape == OutputTensor.shape)
 	{
-		foreach (i; 0 .. numInputs)
+		foreach (i; inputs.indexIterator)
 			inputs[i].accumulateGradient(outputs[i].gradient);
 	}
 }
 
-struct ReLU(T, size_t numInputs)
+struct ReLU(T)
 {
-	alias numOutputs = numInputs;
-
 	void visit(void delegate(ref Variable!T p) cb)
 	{
 	}
 
-	void forward(ref const Variable!T[numInputs] inputs, ref Variable!T[numOutputs] outputs)
+	void forward(InputTensor, OutputTensor)(ref const InputTensor inputs, ref OutputTensor outputs)
+	if (isTensor!(InputTensor, T) && isTensor!(OutputTensor, T) && InputTensor.shape == OutputTensor.shape)
 	{
-		foreach (i; 0 .. numInputs)
+		foreach (i; inputs.indexIterator)
 			outputs[i].value = inputs[i].value < 0 ? 0 : inputs[i].value;
 	}
 
-	void backward(ref Variable!T[numInputs] inputs, ref const Variable!T[numOutputs] outputs)
+	void backward(InputTensor, OutputTensor)(ref InputTensor inputs, ref const OutputTensor outputs)
+	if (isTensor!(InputTensor, T) && isTensor!(OutputTensor, T) && InputTensor.shape == OutputTensor.shape)
 	{
-		foreach (i; 0 .. numInputs)
+		foreach (i; inputs.indexIterator)
 			inputs[i].accumulateGradient(inputs[i].value < 0 ? 0 : outputs[i].gradient);
 	}
 }
 
 // note: this is the tanh-based sigmoid function, not the one used by Keras
-struct Sigmoid(T, size_t numInputs)
+struct Sigmoid(T)
 {
-	alias numOutputs = numInputs;
-
 	void visit(void delegate(ref Variable!T p) cb)
 	{
 	}
 
-	void forward(ref const Variable!T[numInputs] inputs, ref Variable!T[numOutputs] outputs)
+	void forward(InputTensor, OutputTensor)(ref const InputTensor inputs, ref OutputTensor outputs)
+	if (isTensor!(InputTensor, T) && isTensor!(OutputTensor, T) && InputTensor.shape == OutputTensor.shape)
 	{
 		enum z = T(0.5);
-		foreach (i; 0 .. numInputs)
+		foreach (i; inputs.indexIterator)
 			outputs[i].value = tanh(inputs[i].value * z) * z + z;
 	}
 
-	void backward(ref Variable!T[numInputs] inputs, ref const Variable!T[numOutputs] outputs)
+	void backward(InputTensor, OutputTensor)(ref InputTensor inputs, ref const OutputTensor outputs)
+	if (isTensor!(InputTensor, T) && isTensor!(OutputTensor, T) && InputTensor.shape == OutputTensor.shape)
 	{
-		foreach (i; 0 .. numInputs)
+		foreach (i; inputs.indexIterator)
 			inputs[i].accumulateGradient(outputs[i].value * (T(1) - outputs[i].value) * outputs[i].gradient);
 	}
 }
@@ -194,16 +300,16 @@ void main()
 
 	struct Vars
 	{
-		Variable!float[2] v0;
-		Variable!float[4] v1;
-		Variable!float[4] v2;
-		Variable!float[1] v3;
+		DenseArray!(float, Shape([2])) v0;
+		DenseArray!(float, Shape([4])) v1;
+		DenseArray!(float, Shape([4])) v2;
+		DenseArray!(float, Shape([1])) v3;
 	}
 	struct Model
 	{
-		LinearDense!(float, Vars.tupleof[0].length, Vars.tupleof[1].length) l1;
-		ReLU       !(float, Vars.tupleof[1].length                        ) l2;
-		LinearDense!(float, Vars.tupleof[2].length, Vars.tupleof[3].length) l3;
+		LinearDense!(float, Vars.v0.shape, Vars.v1.shape) l1;
+		ReLU       !(float                              ) l2;
+		LinearDense!(float, Vars.v2.shape, Vars.v3.shape) l3;
 	}
 
 	Model m;
@@ -233,13 +339,13 @@ void main()
 		{
 			Vars vars;
 
-			vars.tupleof[0] = inputs[s].amap!variable;
+			vars.tupleof[0].valueIterator = inputs[s].amap!variable;
 			static foreach (i; 0 .. Model.tupleof.length)
 				m.tupleof[i].forward(vars.tupleof[i], vars.tupleof[i + 1]);
 
 			// writef("%1.4f\t", hidden[0].value);
-			foreach (o; 0 .. vars.tupleof[$-1].length)
-				vars.tupleof[$-1][o].setGradient(labels[s][o], learningRate);
+			foreach (o; vars.tupleof[$-1].indexIterator)
+				vars.tupleof[$-1][o].setGradient(labels[s][o[0]], learningRate);
 
 			static foreach_reverse (i; 0 .. Model.tupleof.length)
 				m.tupleof[i].backward(vars.tupleof[i], vars.tupleof[i + 1]);
@@ -258,11 +364,11 @@ void main()
 	foreach (s; 0 .. numSamples)
 	{
 		Vars vars;
-		vars.tupleof[0] = inputs[s].amap!variable;
+		vars.tupleof[0].valueIterator = inputs[s].amap!variable;
 		static foreach (i; 0 .. Model.tupleof.length)
 			m.tupleof[i].forward(vars.tupleof[i], vars.tupleof[i + 1]);
 
-		writeln(vars.tupleof[0].amap!value, " => ", vars.tupleof[$-1].amap!value, " / ", labels[s]);
+		writeln(vars.tupleof[0].valueIterator.amap!value, " => ", vars.tupleof[$-1].valueIterator.amap!value, " / ", labels[s]);
 	}
 
 	// d.weights
