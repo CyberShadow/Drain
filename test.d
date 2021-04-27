@@ -46,7 +46,7 @@ struct Variable(T)
 Variable!T variable(T)(T value) { return Variable!T(value); }
 T value(T)(Variable!T variable) { return variable.value; }
 
-struct Dense(T, size_t numInputs, size_t numOutputs)
+struct LinearDense(T, size_t numInputs, size_t numOutputs)
 {
 	Variable!T[numInputs][numOutputs] weights;
 	Variable!T[numOutputs] biases;
@@ -201,9 +201,9 @@ void main()
 	}
 	struct Model
 	{
-		Dense!(float, Vars.tupleof[0].length, Vars.tupleof[1].length) l1;
-		ReLU !(float, Vars.tupleof[1].length                        ) l2;
-		Dense!(float, Vars.tupleof[2].length, Vars.tupleof[3].length) l3;
+		LinearDense!(float, Vars.tupleof[0].length, Vars.tupleof[1].length) l1;
+		ReLU       !(float, Vars.tupleof[1].length                        ) l2;
+		LinearDense!(float, Vars.tupleof[2].length, Vars.tupleof[3].length) l3;
 	}
 
 	Model m;
