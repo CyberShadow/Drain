@@ -8,67 +8,9 @@ import std.traits;
 
 import ae.utils.array;
 
+import shapes;
+
 private:
-
-struct Shape
-{
-	size_t[] dims;
-
-	@property size_t count()
-	{
-		size_t result = 1;
-		foreach (dim; dims)
-			result *= dim;
-		return result;
-	}
-
-	// Shape cartesianProduct(Shape other) const
-	// {
-	// 	return Shape(dims ~ other.dims);
-	// }
-}
-
-// template StaticArray(T, Shape shape)
-// {
-// 	static if (shape.dims.length == 0)
-// 		alias StaticArray = T;
-// 	else
-// 		alias StaticArray = StaticArray!(T, Shape(shape.dims[1 .. $]))[shape.dims[0]];
-// }
-
-struct Index(Shape _shape)
-{
-	enum shape = _shape;
-	size_t[shape.dims.length] indices;
-	alias indices this;
-
-	auto opBinary(string op : "~", Shape otherShape)(Index!otherShape otherIndex) @nogc
-	{
-		enum Shape newShape = Shape(shape.dims ~ otherShape.dims);
-		size_t[newShape.dims.length] newIndices;
-		newIndices[0 .. indices.length] = indices;
-		newIndices[indices.length .. $] = otherIndex.indices;
-		return Index!newShape(newIndices);
-	}
-}
-
-struct ShapeIterator(Shape shape)
-{
-	Index!shape front;
-	bool empty;
-
-	void popFront()
-	{
-		foreach_reverse (dimIndex; 0 .. shape.dims.length)
-		{
-			if (++front.indices[dimIndex] == shape.dims[dimIndex])
-				front.indices[dimIndex] = 0;
-			else
-				return;
-		}
-		empty = true;
-	}
-}
 
 // -------------
 
