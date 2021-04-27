@@ -1,13 +1,16 @@
+import std.math;
 import std.random;
 import std.stdio;
 import std.traits;
+
+import ae.utils.array;
 
 private:
 
 struct Variable(T)
 {
 	T value;
-	T gradientAccumulator, gradientTotal;
+	T gradientAccumulator = 0, gradientTotal = 0;
 	// Optimizer parameters here?
 
 	void accumulateGradient(T value, T weight = 1)
@@ -15,7 +18,29 @@ struct Variable(T)
 		gradientAccumulator += value;
 		gradientTotal += weight;
 	}
+
+	@property float gradient() const
+	{
+		if (gradientAccumulator == 0 || gradientTotal == 0)
+			return 0;
+		return gradientAccumulator / gradientTotal;
+	}
+
+	// Used to start backpropagation.
+	void setGradient(T label, T learningRate)
+	{
+		gradientAccumulator = (label - value) * learningRate;
+		gradientTotal = 1;
+	}
+
+	void applyGradient()
+	{
+		value += gradient();
+		gradientAccumulator = gradientTotal = 0;
+	}
 }
+Variable!T variable(T)(T value) { return Variable!T(value); }
+T value(T)(Variable!T variable) { return variable.value; }
 
 struct Dense(T, size_t numInputs, size_t numOutputs)
 {
@@ -31,28 +56,28 @@ struct Dense(T, size_t numInputs, size_t numOutputs)
 			cb(v);
 	}
 
-	void forward(ref const T[numInputs] inputs, ref T[numOutputs] outputs)
+	void forward(ref const Variable!T[numInputs] inputs, ref Variable!T[numOutputs] outputs)
 	{
 		foreach (i; 0 .. numOutputs)
-			outputs[i] = biases[i].value;
+			outputs[i].value = biases[i].value;
 		foreach (i; 0 .. numInputs)
 			foreach (o; 0 .. numOutputs)
-				outputs[o] += inputs[i] * weights[o][i].value;
+				outputs[o].value += inputs[i].value * weights[o][i].value;
 	}
 
-	void backward(ref const T[numInputs] inputs, ref const T[numOutputs] gradients, ref Variable!T[numInputs] backGradients)
+	void backward(ref Variable!T[numInputs] inputs, ref const Variable!T[numOutputs] outputs)
 	{
 		foreach (o; 0 .. numOutputs)
 		{
-			auto gradient = gradients[o];
+			auto gradient = outputs[o].gradient;
 			biases[o].accumulateGradient(gradient);
 			foreach (i; 0 .. numInputs)
-				weights[o][i].accumulateGradient(gradient * inputs[i]);
+				weights[o][i].accumulateGradient(gradient * inputs[i].value);
 		}
 
 		foreach (o; 0 .. numOutputs)
 			foreach (i; 0 .. numInputs)
-				backGradients[i].accumulateGradient(gradients[o] * weights[o][i].value);
+				inputs[i].accumulateGradient(outputs[o].gradient * weights[o][i].value);
 	}
 }
 
@@ -68,23 +93,12 @@ void initialize(Layer)(ref Layer layer)
 	layer.visit(&visitor);
 }
 
-void beginLearn(Layer)(ref Layer layer)
+void applyGradients(Layer)(ref Layer layer)
 {
 	alias T = float; // TODO
 	void visitor(ref Variable!T p)
 	{
-		p.gradientAccumulator = p.gradientTotal = 0;
-	}
-	layer.visit(&visitor);
-}
-
-void endLearn(Layer)(ref Layer layer)
-{
-	alias T = float; // TODO
-	void visitor(ref Variable!T p)
-	{
-		if (p.gradientAccumulator != 0)
-			p.value += p.gradientAccumulator / p.gradientTotal;
+		p.applyGradient();
 	}
 	layer.visit(&visitor);
 }
@@ -129,22 +143,22 @@ void main()
 		// auto learningRate = 1f;
 		auto learningRate = (numEpochs - epoch) / float(numEpochs);
 
-		foreach (ref layer; m.tupleof)
-			layer.beginLearn();
-
-		foreach (i; 0 .. numSamples)
+		foreach (s; 0 .. numSamples)
 		{
-			float[1] output, gradient;
-			Variable!float[2] inputGradient;
-			m.d.forward(inputs[i], output);
+			auto input = inputs[s].amap!variable;
+			Variable!float[1] output;
+
+			m.d.forward(input, output);
+
 			// writef("%1.4f\t", output[0]);
-			gradient[] = (labels[i][] - output[]) * learningRate;
-			m.d.backward(inputs[i], gradient, inputGradient);
+			foreach (o; 0 .. output.length)
+				output[o].setGradient(labels[s][o], learningRate);
+			m.d.backward(input, output);
 		}
 		// writefln("\t%s\t%s", m.d.weights, m.d.biases);
 
 		foreach (ref layer; m.tupleof)
-			layer.endLearn();
+			layer.applyGradients();
 	}
 
 	writeln(m.d.weights);
@@ -152,11 +166,12 @@ void main()
 	// d.weights[0][0] = 3;
 	// d.biases[0] = 4;
 
-	float[1][numSamples] outputs;
-	foreach (i; 0 .. numSamples)
+	foreach (s; 0 .. numSamples)
 	{
-		m.d.forward(inputs[i], outputs[i]);
-		writeln(inputs[i], " => ", outputs[i], " / ", labels[i]);
+		auto input = inputs[s].amap!variable;
+		Variable!float[1] output;
+		m.d.forward(input, output);
+		writeln(input.amap!value, " => ", output.amap!value, " / ", labels[s]);
 	}
 
 	// d.weights
