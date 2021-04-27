@@ -4,13 +4,13 @@ import std.traits;
 
 private:
 
-struct Parameter(T)
+struct Variable(T)
 {
 	T value;
 	T gradientAccumulator, gradientTotal;
 	// Optimizer parameters here?
 
-	void accummulateGradient(T value, T weight = 1)
+	void accumulateGradient(T value, T weight = 1)
 	{
 		gradientAccumulator += value;
 		gradientTotal += weight;
@@ -19,10 +19,10 @@ struct Parameter(T)
 
 struct Dense(T, size_t numInputs, size_t numOutputs)
 {
-	Parameter!T[numInputs][numOutputs] weights;
-	Parameter!T[numOutputs] biases;
+	Variable!T[numInputs][numOutputs] weights;
+	Variable!T[numOutputs] biases;
 
-	void visit(void delegate(ref Parameter!T p) cb)
+	void visit(void delegate(ref Variable!T p) cb)
 	{
 		foreach (ref r; weights)
 			foreach (ref v; r)
@@ -40,17 +40,19 @@ struct Dense(T, size_t numInputs, size_t numOutputs)
 				outputs[o] += inputs[i] * weights[o][i].value;
 	}
 
-	void backward(ref const T[numInputs] inputs, ref const T[numOutputs] gradients)
+	void backward(ref const T[numInputs] inputs, ref const T[numOutputs] gradients, ref Variable!T[numInputs] backGradients)
 	{
 		foreach (o; 0 .. numOutputs)
 		{
 			auto gradient = gradients[o];
-			biases[o].accummulateGradient(gradient);
+			biases[o].accumulateGradient(gradient);
 			foreach (i; 0 .. numInputs)
-			{
-				weights[o][i].accummulateGradient(gradient * inputs[i]);
-			}
+				weights[o][i].accumulateGradient(gradient * inputs[i]);
 		}
+
+		foreach (o; 0 .. numOutputs)
+			foreach (i; 0 .. numInputs)
+				backGradients[i].accumulateGradient(gradients[o] * weights[o][i].value);
 	}
 }
 
@@ -59,7 +61,7 @@ void initialize(Layer)(ref Layer layer)
 	alias LayerParameter = std.traits.Parameters!(std.traits.Parameters!(Layer.visit)[0])[0];
 	alias T = float; // TODO
 
-	void visitor(ref Parameter!T p)
+	void visitor(ref Variable!T p)
 	{
 		p.value = uniform01!T;
 	}
@@ -69,7 +71,7 @@ void initialize(Layer)(ref Layer layer)
 void beginLearn(Layer)(ref Layer layer)
 {
 	alias T = float; // TODO
-	void visitor(ref Parameter!T p)
+	void visitor(ref Variable!T p)
 	{
 		p.gradientAccumulator = p.gradientTotal = 0;
 	}
@@ -79,7 +81,7 @@ void beginLearn(Layer)(ref Layer layer)
 void endLearn(Layer)(ref Layer layer)
 {
 	alias T = float; // TODO
-	void visitor(ref Parameter!T p)
+	void visitor(ref Variable!T p)
 	{
 		if (p.gradientAccumulator != 0)
 			p.value += p.gradientAccumulator / p.gradientTotal;
@@ -133,10 +135,11 @@ void main()
 		foreach (i; 0 .. numSamples)
 		{
 			float[1] output, gradient;
+			Variable!float[2] inputGradient;
 			m.d.forward(inputs[i], output);
 			// writef("%1.4f\t", output[0]);
 			gradient[] = (labels[i][] - output[]) * learningRate;
-			m.d.backward(inputs[i], gradient);
+			m.d.backward(inputs[i], gradient, inputGradient);
 		}
 		// writefln("\t%s\t%s", m.d.weights, m.d.biases);
 
