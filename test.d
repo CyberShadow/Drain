@@ -1,3 +1,4 @@
+import std.algorithm.mutation;
 import std.math;
 import std.random;
 import std.stdio;
@@ -23,7 +24,10 @@ struct Variable(T)
 	{
 		if (gradientAccumulator == 0 || gradientTotal == 0)
 			return 0;
-		return gradientAccumulator / gradientTotal;
+		T result = gradientAccumulator / gradientTotal;
+		if (result != result)
+			result = 0;
+		return result;
 	}
 
 	// Used to start backpropagation.
@@ -81,6 +85,71 @@ struct Dense(T, size_t numInputs, size_t numOutputs)
 	}
 }
 
+struct Identity(T, size_t numInputs)
+{
+	alias numOutputs = numInputs;
+
+	void visit(void delegate(ref Variable!T p) cb)
+	{
+	}
+
+	void forward(ref const Variable!T[numInputs] inputs, ref Variable!T[numOutputs] outputs)
+	{
+		foreach (i; 0 .. numInputs)
+			outputs[i].value = inputs[i].value;
+	}
+
+	void backward(ref Variable!T[numInputs] inputs, ref const Variable!T[numOutputs] outputs)
+	{
+		foreach (i; 0 .. numInputs)
+			inputs[i].accumulateGradient(outputs[i].gradient);
+	}
+}
+
+struct ReLU(T, size_t numInputs)
+{
+	alias numOutputs = numInputs;
+
+	void visit(void delegate(ref Variable!T p) cb)
+	{
+	}
+
+	void forward(ref const Variable!T[numInputs] inputs, ref Variable!T[numOutputs] outputs)
+	{
+		foreach (i; 0 .. numInputs)
+			outputs[i].value = inputs[i].value < 0 ? 0 : inputs[i].value;
+	}
+
+	void backward(ref Variable!T[numInputs] inputs, ref const Variable!T[numOutputs] outputs)
+	{
+		foreach (i; 0 .. numInputs)
+			inputs[i].accumulateGradient(inputs[i].value < 0 ? 0 : outputs[i].gradient);
+	}
+}
+
+// note: this is the tanh-based sigmoid function, not the one used by Keras
+struct Sigmoid(T, size_t numInputs)
+{
+	alias numOutputs = numInputs;
+
+	void visit(void delegate(ref Variable!T p) cb)
+	{
+	}
+
+	void forward(ref const Variable!T[numInputs] inputs, ref Variable!T[numOutputs] outputs)
+	{
+		enum z = T(0.5);
+		foreach (i; 0 .. numInputs)
+			outputs[i].value = tanh(inputs[i].value * z) * z + z;
+	}
+
+	void backward(ref Variable!T[numInputs] inputs, ref const Variable!T[numOutputs] outputs)
+	{
+		foreach (i; 0 .. numInputs)
+			inputs[i].accumulateGradient(outputs[i].value * (T(1) - outputs[i].value) * outputs[i].gradient);
+	}
+}
+
 void initialize(Layer)(ref Layer layer)
 {
 	alias LayerParameter = std.traits.Parameters!(std.traits.Parameters!(Layer.visit)[0])[0];
@@ -116,22 +185,30 @@ void main()
 		inputs[i][0] = uniform01!float();
 		inputs[i][1] = uniform01!float();
 
-		labels[i][0] = inputs[i][0] * 2 + inputs[i][1] * 3 + 5;
+		// labels[i][0] = inputs[i][0] * 2 + inputs[i][1] * 3 + 5;
+		// labels[i][0] = inputs[i][0] < inputs[i][1] ? 0 : 1;
+		if ((inputs[i][0] < inputs[i][1]) != (i % 2))
+			swap(inputs[i][0], inputs[i][1]);
+		labels[i][0] = i % 2;
 	}
 
 	struct Model
 	{
 		Dense!(float, 2, 1) d;
+		Sigmoid!(float, 1) s;
 	}
 	Model m;
 	foreach (ref layer; m.tupleof)
 		layer.initialize();
 
-	foreach (i; 0 .. numSamples)
-		writef("%1.4f\t", inputs[i][0]);
-	writeln;
-	foreach (i; 0 .. numSamples)
-		writef("%1.4f\t", labels[i][0]);
+	foreach (i; 0 .. inputs[0].length)
+	{
+		foreach (s; 0 .. numSamples)
+			writef("%1.4f\t", inputs[s][i]);
+		writeln;
+	}
+	foreach (s; 0 .. numSamples)
+		writef("%1.4f\t", labels[s][0]);
 	writeln;
 	writeln("---------------------------------------------------");
 
@@ -145,15 +222,18 @@ void main()
 
 		foreach (s; 0 .. numSamples)
 		{
-			auto input = inputs[s].amap!variable;
-			Variable!float[1] output;
+			Variable!float[2] input = inputs[s].amap!variable;
+			Variable!float[1] hidden, output;
 
-			m.d.forward(input, output);
+			m.d.forward(input, hidden);
+			m.s.forward(hidden, output);
 
-			// writef("%1.4f\t", output[0]);
+			// writef("%1.4f\t", hidden[0].value);
 			foreach (o; 0 .. output.length)
 				output[o].setGradient(labels[s][o], learningRate);
-			m.d.backward(input, output);
+
+			m.s.backward(hidden, output);
+			m.d.backward(input, hidden);
 		}
 		// writefln("\t%s\t%s", m.d.weights, m.d.biases);
 
@@ -169,8 +249,9 @@ void main()
 	foreach (s; 0 .. numSamples)
 	{
 		auto input = inputs[s].amap!variable;
-		Variable!float[1] output;
-		m.d.forward(input, output);
+		Variable!float[1] hidden, output;
+		m.d.forward(input, hidden);
+		m.s.forward(hidden, output);
 		writeln(input.amap!value, " => ", output.amap!value, " / ", labels[s]);
 	}
 
