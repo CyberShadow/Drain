@@ -332,3 +332,85 @@ unittest
 	graph.testGradient(label.box);
 	assert(graph.tensors[0].value.valueIterator == [2f, 3f]);
 }
+
+
+// ----------------------------------------------------------------------------
+
+
+/// Multiplies values in a box along an axis.
+struct Multiply(Parent, size_t axis)
+if (isTensor!Parent)
+{
+	alias Parents = AliasSeq!Parent;
+	alias T = typeof(Parent.value).T;
+
+	DenseBox!(T, Parent.value.shape.dropAxis(axis)) value;
+	static if (isTrainable!Parent)
+	{
+		typeof(value) gradient;
+		enum gradientWeights = constant!1.repeat!(typeof(value).shape); // TODO
+	}
+
+	void forward(ref Parents parents)
+	{
+		foreach (ref v; value.valueIterator)
+			v = 1;
+		foreach (i; parents[0].value.indexIterator)
+			value[i.dropAxis!axis] *= parents[0].value[i];
+	}
+
+	static if (isTrainable!Parent)
+	void backward(ref Parents parents)
+	{
+		DenseBox!(GradientWeight, Parent.value.shape.dropAxis(axis)) weightTotals;
+		foreach (i; parents[0].gradientWeights.indexIterator)
+			weightTotals[i.dropAxis!axis] += parents[0].gradientWeights[i];
+		foreach (i; parents[0].gradient.indexIterator)
+		{
+			auto x = parents[0].value[i];
+			auto logx = log(abs(x));
+			auto y = this.value[i.dropAxis!axis];
+			auto logy = log(abs(y));
+			auto yg = this.gradient[i.dropAxis!axis];
+			auto y2 = y + yg;
+			auto logy2 = log(abs(y2));
+			auto logyg = logy2 - logy;
+			auto logx2 = logx + (logyg * parents[0].gradientWeights[i] / weightTotals[i.dropAxis!axis]);
+			auto x2 = exp(logx2) * sgn(x);
+			if (sgn(y) != sgn(y2))
+				if (i.indices[axis] == 0)
+					x2 = -x2;
+			auto xg = x2 - x;
+
+			parents[0].gradient[i] += xg;
+		}
+	}
+
+	static assert(isTensor!(typeof(this)));
+}
+
+Multiply!(Parent, axis) multiply(size_t axis = 0, Parent)(Parent parent)
+if (isTensor!Parent)
+{
+	return Multiply!(Parent, axis)();
+} /// ditto
+
+unittest
+{
+	float[2][1] inputData = [[2f, 3f]];
+	auto graph = inputData[].boxes
+		.trainableInput
+		.multiply
+		.build;
+
+	graph.forward(inputData[0].box);
+	assert(graph.tensors[$-1].value.valueIterator.front == 6f);
+
+	float label = 24f;
+	graph.testGradient(label.box);
+	assert(graph.tensors[0].value.valueIterator == [4f, 6f]);
+
+	label = -24f;
+	graph.testGradient(label.box);
+	assert(graph.tensors[0].value.valueIterator == [-4f, 6f]);
+}
