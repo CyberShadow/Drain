@@ -1,5 +1,6 @@
 @nogc:
 
+import std.math;
 import std.meta;
 import std.range.primitives;
 
@@ -92,7 +93,7 @@ struct Graph(Tensors...)
 		}
 	}
 
-	/// Fit the graph to the given label.
+	/// Fit the graph to the given labels.
 	void backward(staticMap!(TensorValue, typeof(outputTensors)) output)
 	{
 		// Clear gradients
@@ -118,6 +119,47 @@ struct Graph(Tensors...)
 					tensor.backward();
 			}
 		}
+	}
+
+	/// Backpropagate the given labels, and then do a forward pass.
+	/// Assert that the result of the forward pass matches label.
+	/// Used to test differentiation.
+	void testGradient(staticMap!(TensorValue, typeof(outputTensors)) output)
+	{
+		// Clear gradients
+		foreach_reverse (ti, ref tensor; tensors)
+		{
+			static if (isTrainable!(typeof(tensor)))
+				foreach (ref g; tensor.gradient.valueIterator)
+					g = 0;
+		}
+
+		static foreach (ti; 0 .. outputTensors.length)
+			foreach (i; output[ti].indexIterator)
+				outputTensors[ti].gradient[i] = output[ti][i] - outputTensors[ti].value[i];
+
+		foreach_reverse (i, ref tensor; tensors)
+		{
+			static if (isTrainable!(typeof(tensor)))
+			{
+				// TODO multiple parents
+				static if (i)
+					tensor.backward(tensors[i-1]);
+				else
+					tensor.backward();
+			}
+		}
+
+		foreach (i, ref tensor; tensors)
+		{
+			// TODO multiple parents
+			static if (i)
+				tensor.forward(tensors[i-1]);
+		}
+
+		static foreach (ti; 0 .. outputTensors.length)
+			foreach (i; output[ti].indexIterator)
+				assert(approxEqual(output[ti][i], outputTensors[ti].value[i]));
 	}
 }
 
@@ -287,6 +329,6 @@ unittest
 	assert(graph.tensors[$-1].value.valueIterator.front == 3f);
 
 	float label = 5f;
-	graph.backward(label.box);
+	graph.testGradient(label.box);
 	assert(graph.tensors[0].value.valueIterator == [2f, 3f]);
 }
