@@ -43,17 +43,18 @@ if (isTensor!Tensor)
 		/// Populated by child tensors' `backward` functions.
 		/// Read by this tensor`s `backward` function.
 		&& isBox!(typeof(Tensor.gradient))
+		&& Tensor.gradient.shape == Tensor.value.shape
+
+		/// Tells children how to distribute the gradient
+		/// among its parents.
+		&& isBox!(typeof(Tensor.gradientWeights))
+		&& Tensor.gradientWeights.shape == Tensor.value.shape
 	;
 }
 
 
-template ParentGradients(Parents...)
-{
-	alias TrainableParents = Filter!(isTrainable, Parents);
-	alias TensorGradient(Tensor) = typeof(Tensor.value);
-	alias ParentGradients = staticMap!(TensorGradient, Parents);
-}
-
+/// Type used to represent gradient weights.
+alias GradientWeight = uint;
 
 // ----------------------------------------------------------------------------
 
@@ -75,6 +76,8 @@ struct Graph(Tensors...)
 
 	private alias TensorValue(Tensor) = typeof(Tensor.value);
 
+	private alias outputTensors = tensors[$-1 .. $]; // TODO
+
 	/// Calculate output from the given input.
 	void forward(staticMap!(TensorValue, typeof(inputTensors)) input)
 	{
@@ -86,6 +89,34 @@ struct Graph(Tensors...)
 			// TODO multiple parents
 			static if (i)
 				tensor.forward(tensors[i-1]);
+		}
+	}
+
+	/// Fit the graph to the given label.
+	void backward(staticMap!(TensorValue, typeof(outputTensors)) output)
+	{
+		// Clear gradients
+		foreach_reverse (ti, ref tensor; tensors)
+		{
+			static if (isTrainable!(typeof(tensor)))
+				foreach (ref g; tensor.gradient.valueIterator)
+					g = 0;
+		}
+
+		static foreach (ti; 0 .. outputTensors.length)
+			foreach (i; output[ti].indexIterator)
+				outputTensors[ti].gradient[i] = output[ti][i] - outputTensors[ti].value[i];
+
+		foreach_reverse (i, ref tensor; tensors)
+		{
+			static if (isTrainable!(typeof(tensor)))
+			{
+				// TODO multiple parents
+				static if (i)
+					tensor.backward(tensors[i-1]);
+				else
+					tensor.backward();
+			}
 		}
 	}
 }
@@ -156,6 +187,52 @@ if (isInputRange!R && isBox!(ElementType!R))
 // ----------------------------------------------------------------------------
 
 
+/// Trainable input tensor.
+/// Like `Input`, but accepts and applies gradients.
+/// Used for testing backpropagation.
+struct TrainableInput(Box)
+if (isBox!Box)
+{
+	alias Parents = AliasSeq!(); /// No parents.
+
+	Box value; /// Value is fed in by graph methods.
+	Box gradient; /// Gradient input.
+	enum gradientWeights = constant!1.repeat!(Box.shape);
+
+	/// Never called.
+	void forward(ref Parents parents) { assert(false); }
+
+	/// Tells `Graph` to populate `value`.
+	enum isInput = true;
+
+	void backward(ref Parents parents)
+	{
+		foreach (i; gradient.indexIterator)
+		{
+			value[i] += gradient[i];
+			gradient[i] = 0;
+		}
+	}
+
+	static assert(isTensor!(typeof(this)));
+	static assert(isTrainable!(typeof(this)));
+}
+
+auto trainableInput(T, Shape shape)()
+{
+	return TrainableInput!(T, shape)();
+} /// ditto
+
+auto trainableInput(R)(R data)
+if (isInputRange!R && isBox!(ElementType!R))
+{
+	return TrainableInput!(ElementType!R)();
+} /// ditto
+
+
+// ----------------------------------------------------------------------------
+
+
 /// Adds values in a box along an axis.
 struct Add(Parent, size_t axis)
 if (isTensor!Parent)
@@ -165,7 +242,10 @@ if (isTensor!Parent)
 
 	DenseBox!(T, Parent.value.shape.dropAxis(axis)) value;
 	static if (isTrainable!Parent)
+	{
 		typeof(value) gradient;
+		enum gradientWeights = constant!1.repeat!(typeof(value).shape); // TODO
+	}
 
 	void forward(ref Parents parents)
 	{
@@ -176,8 +256,13 @@ if (isTensor!Parent)
 	}
 
 	static if (isTrainable!Parent)
-	void backward(ref typeof(value) outputGradient)
+	void backward(ref Parents parents)
 	{
+		DenseBox!(GradientWeight, Parent.value.shape.dropAxis(axis)) weightTotals;
+		foreach (i; parents[0].gradientWeights.indexIterator)
+			weightTotals[i.dropAxis!axis] += parents[0].gradientWeights[i];
+		foreach (i; parents[0].gradient.indexIterator)
+			parents[0].gradient[i] += this.gradient[i.dropAxis!axis] * parents[0].gradientWeights[i] / weightTotals[i.dropAxis!axis];
 		
 	}
 
@@ -194,10 +279,14 @@ unittest
 {
 	float[2][1] inputData = [[1f, 2f]];
 	auto graph = inputData[].boxes
-		.input
+		.trainableInput
 		.add
 		.build;
 
 	graph.forward(inputData[0].box);
 	assert(graph.tensors[$-1].value.valueIterator.front == 3f);
+
+	float label = 5f;
+	graph.backward(label.box);
+	assert(graph.tensors[0].value.valueIterator == [2f, 3f]);
 }

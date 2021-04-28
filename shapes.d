@@ -10,7 +10,7 @@ import std.range;
 struct Shape
 {
 	/// Size in each dimension.
-	immutable size_t[] dims;
+	immutable size_t[] dims = [];
 
 	/// Total number of elements
 	/// (product of all dimensions).
@@ -30,7 +30,7 @@ struct Shape
 }
 
 // Concatenate two static arrays.
-private T[n+m] sconcat(T, size_t n, size_t m)(ref const T[n] a, ref const T[m] b)
+private T[n+m] sconcat(T, size_t n, size_t m)(auto ref const T[n] a, auto ref const T[m] b)
 {
 	T[n+m] result;
 	result[0 .. n] = a;
@@ -133,39 +133,6 @@ static assert(is(ElementTypeOfStaticArray!int == int));
 static assert(is(ElementTypeOfStaticArray!(int[2]) == int));
 static assert(is(ElementTypeOfStaticArray!(int[2][3]) == int));
 
-// /// Static array UFCS primitives.
-// ref ElementTypeOfStaticArray!T[shapeOfStaticArray!T.count()] valueIterator(T)(ref return T a)
-// {
-// 	return *cast(typeof(return)*)&a;
-// }
-
-// unittest
-// {
-// 	float[2][2] a = [[1,2],[3,4]];
-// 	assert(a.valueIterator == [1,2,3,4]);
-
-// 	float b = 5;
-// 	assert(b.valueIterator == [5]);
-// }
-
-// /// ditto
-// ShapeIterator!(shapeOfStaticArray!T) indexIterator(T)(ref T a)
-// {
-// 	return typeof(return)();
-// }
-
-// unittest
-// {
-// 	import std.algorithm.comparison : equal;
-
-// 	float[2][3] a;
-// 	assert(a.indexIterator.equal([[0,0],[0,1],[1,0],[1,1],[2,0],[2,1]]));
-
-// 	float b = 5;
-// 	assert(b.indexIterator.equal([[]]));
-// }
-
-
 
 // ----------------------------------------------------------------------------
 // Box types
@@ -176,10 +143,19 @@ static assert(is(ElementTypeOfStaticArray!(int[2][3]) == int));
 /// Boxes may actually be dense, sparse,
 /// a function of some other box, or fully procedural.
 enum isBox(Box) = true
+
+	/// Box types should declare their shape.
 	&& is(typeof(Box.shape) : Shape)
-	&& __traits(hasMember, Box, q{T})
-	&& __traits(hasMember, Box, q{valueIterator})
-	&& __traits(hasMember, Box, q{indexIterator})
+
+	/// Box types should declare their underlying type
+	/// (after stripping away all dimensions in `shape`).
+	&& is(Box.T)
+
+	/// The value iterator returns an iterator over all set / unique values.
+	&& is(typeof(Box.init.valueIterator.front) : Box.T)
+
+	/// The index iterator returns an iterator over all valid indices in `Box`.
+	&& typeof(Box.init.indexIterator.front).shape == Box.shape
 ;
 
 /// ditto
@@ -217,14 +193,13 @@ struct DenseBox(_T, Shape _shape)
 		return ShapeIterator!shape();
 	}
 
-	/// Reference a particular element or sub-matrix by its `Index`.
-	ref auto opIndex(Shape indexShape)(Index!indexShape index) inout
-	if (shape.dims.startsWith(indexShape.dims))
+	/// Reference a particular element by its `Index`.
+	ref auto opIndex(Index!shape index) inout
 	{
-		static if (indexShape.dims.length == 0)
+		static if (shape.dims.length == 0)
 			return value;
 		else
-			return value[index.indices[0]][Index!(Shape(indexShape.dims[1 .. $]))(index.indices[1 .. $])];
+			return value[index.indices[0]][Index!(Shape(shape.dims[1 .. $]))(index.indices[1 .. $])];
 	}
 }
 static assert(isBoxOf!(DenseBox!(float, Shape([1])), float));
@@ -278,4 +253,107 @@ unittest
 	float[2][] a = [[1,2],[3,4]];
 	assert(a.boxes.map!(box => box.valueIterator).equal([[1,2],[3,4]]));
 
+}
+
+// ----------------------------------------------------------------------------
+
+/// Nullary box wrapping a compile-time value.
+struct Constant(_T, _T value)
+{
+	alias T = _T;
+	enum Shape shape = Shape.init;
+	T opIndex(Index!shape index) const { return value; }
+	auto valueIterator() { return value.only; }
+	auto indexIterator() { return ShapeIterator!shape(); }
+}
+static assert(isBoxOf!(Constant!(int, 1), int));
+
+Constant!(typeof(args[0]), args[0]) constant(args...)() if (args.length == 1) { return typeof(return)(); } /// ditto
+
+/// Nullary box wrapping a run-time value.
+struct Variable(_T)
+{
+	alias T = _T;
+	T value;
+	enum Shape shape = Shape.init;
+	T opIndex(Index!shape index) const { return value; }
+	auto valueIterator() { return value.only; }
+	auto indexIterator() { return ShapeIterator!shape(); }
+}
+static assert(isBoxOf!(Variable!int, int));
+
+Variable!T variable(T)(T value) { return Variable!T(value); } /// ditto
+
+// ----------------------------------------------------------------------------
+
+/// Adds a dimension to the front of `Box` with length `n`.
+struct Repeat(Box, size_t n)
+{
+	alias T = Box.T;
+	enum shape = Shape(n ~ Box.shape.dims);
+	Box value;
+
+	auto ref valueIterator()
+	{
+		return value.valueIterator;
+	}
+
+	auto indexIterator() @nogc
+	{
+		version (none) // Not @nogc
+		{
+			import std.algorithm.iteration : map, joiner;
+			return n.iota.map!(i => value.indexIterator.map!(vi => Index!shape(sconcat([i].staticArray, vi.indices)))).joiner;
+		}
+		else
+		{
+			struct Iterator
+			{
+				private size_t i; // this dimension
+				private ShapeIterator!(Box.shape) nextIndex;
+				bool empty;
+
+				@property Index!shape front()
+				{
+					return Index!shape(sconcat([i].staticArray, nextIndex.front.indices));
+				}
+
+				void popFront()
+				{
+					assert(!empty);
+					nextIndex.popFront();
+					if (nextIndex.empty)
+					{
+						nextIndex = typeof(nextIndex).init;
+						i++;
+						empty = i == n;
+					}
+				}
+			}
+			return Iterator.init;
+		}
+	}
+
+	/// Reference a particular element by its `Index`.
+	ref auto opIndex(Index!shape index) inout
+	{
+		return value[Index!(Shape(shape.dims[1 .. $]))(index.indices[1 .. $])];
+	}
+}
+Repeat!(Box, n) repeat(size_t n, Box)(auto ref Box box) if (isBox!Box) { return Repeat!(Box, n)(box); } /// ditto
+
+auto repeat(Shape shape, Box)(auto ref Box box)
+if (isBox!Box)
+{
+	static if (shape.dims.length == 0)
+		return box;
+	else
+		return repeat!(shape.dims[0])(repeat!(Shape(shape.dims[1 .. $]))(box));
+} /// ditto
+
+unittest
+{
+	auto b = constant!1.repeat!(Shape([2, 2]));
+	assert(b[Index!(b.shape)([0, 0])] == 1);
+	assert(b[Index!(b.shape)([1, 1])] == 1);
 }
