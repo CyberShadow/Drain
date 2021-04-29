@@ -1,4 +1,6 @@
+import std.algorithm.iteration;
 import std.algorithm.searching : startsWith;
+import std.exception : assumeUnique;
 import std.range;
 
 // ----------------------------------------------------------------------------
@@ -26,6 +28,28 @@ struct Shape
 	Shape dropAxis(size_t axis)
 	{
 		return Shape(dims[0 .. axis] ~ dims[axis + 1 .. $]);
+	}
+
+	/// Returns the shape resulting from the concatenation of the
+	/// given shapes along the given axis.
+	static Shape concatenate(size_t axis, Shape[] shapes...)
+	{
+		assert(shapes.length > 0, "No shapes to concatenate");
+		foreach (shape; shapes)
+			assert(shape.dims.length == shapes[0].dims.length, "Dimensionality does not match for concatenate");
+		assert(axis < shapes[0].dims.length, "Concatenation axis is out of bounds");
+		size_t[] result;
+		result.length = shapes[0].dims.length;
+		foreach (i; 0 .. result.length)
+			if (i == axis)
+				result[i] = shapes.map!(shape => shape.dims[axis]).reduce!"a+b";
+			else
+			{
+				foreach (shape; shapes)
+					assert(shape.dims[i] == shapes[0].dims[i], "Non-concatenation axis mismatch");
+				result[i] = shapes[0].dims[i];
+			}
+		return Shape(result.assumeUnique);
 	}
 }
 
@@ -194,12 +218,21 @@ struct DenseBox(_T, Shape _shape)
 	}
 
 	/// Reference a particular element by its `Index`.
-	ref auto opIndex(Index!shape index) inout
+	ref inout(T) opIndex(Index!shape index) inout return
 	{
 		static if (shape.dims.length == 0)
 			return value;
 		else
 			return value[index.indices[0]][Index!(Shape(shape.dims[1 .. $]))(index.indices[1 .. $])];
+	}
+
+	// Work-around for https://issues.dlang.org/show_bug.cgi?id=21878
+	void opIndexAssign(T newValue, Index!shape index)
+	{
+		static if (shape.dims.length == 0)
+			value = newValue;
+		else
+			value[index.indices[0]][Index!(Shape(shape.dims[1 .. $]))(index.indices[1 .. $])] = newValue;
 	}
 }
 static assert(isBoxOf!(DenseBox!(float, Shape([1])), float));
