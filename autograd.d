@@ -46,8 +46,8 @@ if (isTensor!Tensor)
 		&& isBox!(typeof(Tensor.gradient))
 		&& Tensor.gradient.shape == Tensor.value.shape
 
-		/// Tells children how to distribute the gradient
-		/// among its parents.
+		/// Tells children how to distribute the gradient among its parents.
+		/// Should be evaluatable at compile time.
 		&& isBox!(typeof(Tensor.gradientWeights))
 		&& Tensor.gradientWeights.shape == Tensor.value.shape
 	;
@@ -286,7 +286,7 @@ if (isTensor!Parent)
 	static if (isTrainable!Parent)
 	{
 		typeof(value) gradient;
-		enum gradientWeights = constant!1.repeat!(typeof(value).shape); // TODO
+		static immutable gradientWeights = Parent.gradientWeights.fold!axis(sum);
 	}
 
 	void forward(ref Parents parents)
@@ -300,12 +300,9 @@ if (isTensor!Parent)
 	static if (isTrainable!Parent)
 	void backward(ref Parents parents)
 	{
-		DenseBox!(GradientWeight, Parent.value.shape.dropAxis(axis)) weightTotals;
-		foreach (i; parents[0].gradientWeights.indexIterator)
-			weightTotals[i.dropAxis!axis] += parents[0].gradientWeights[i];
+		static immutable weightTotals = parents[0].gradientWeights.fold!axis(sum);
 		foreach (i; parents[0].gradient.indexIterator)
 			parents[0].gradient[i] += this.gradient[i.dropAxis!axis] * parents[0].gradientWeights[i] / weightTotals[i.dropAxis!axis];
-		
 	}
 
 	static assert(isTensor!(typeof(this)));
@@ -351,7 +348,7 @@ if (isTensor!Parent)
 	static if (isTrainable!Parent)
 	{
 		typeof(value) gradient;
-		enum gradientWeights = constant!1.repeat!(typeof(value).shape); // TODO
+		static immutable gradientWeights = Parent.gradientWeights.fold!axis(sum);
 	}
 
 	void forward(ref Parents parents)
@@ -365,9 +362,7 @@ if (isTensor!Parent)
 	static if (isTrainable!Parent)
 	void backward(ref Parents parents)
 	{
-		DenseBox!(GradientWeight, Parent.value.shape.dropAxis(axis)) weightTotals;
-		foreach (i; parents[0].gradientWeights.indexIterator)
-			weightTotals[i.dropAxis!axis] += parents[0].gradientWeights[i];
+		static immutable weightTotals = Parent.gradientWeights.fold!axis(sum);
 		foreach (i; parents[0].gradient.indexIterator)
 		{
 			auto x = parents[0].value[i];
