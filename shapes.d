@@ -32,7 +32,7 @@ struct Shape
 // Concatenate two static arrays.
 private T[n+m] sconcat(T, size_t n, size_t m)(auto ref const T[n] a, auto ref const T[m] b)
 {
-	T[n+m] result;
+	T[n+m] result = void; // https://issues.dlang.org/show_bug.cgi?id=21876
 	result[0 .. n] = a;
 	result[n .. $] = b;
 	return result;
@@ -257,14 +257,55 @@ unittest
 
 // ----------------------------------------------------------------------------
 
+/// Reduce the dimensionality of `box` by folding all elements along
+/// `axis` using the supplied binary predicate, therefore removing it.
+DenseBox!(Box.T, Box.shape.dropAxis(axis)) fold(size_t axis, Box, Pred)(const auto ref Box box, Pred pred)
+{
+	DenseBox!(Box.T, Box.shape.dropAxis(axis)) result;
+	foreach (i; box.indexIterator)
+	{
+		if (i.indices[axis] == 0)
+			result[i.dropAxis!axis] = box[i];
+		else
+			result[i.dropAxis!axis] = pred(result[i.dropAxis!axis], box[i]);
+	}
+	return result;
+}
+
+/// Construct a predicate from a binary function.
+// TODO move this somewhere proper.
+auto binary(alias fun)()
+{
+	struct Pred
+	{
+		auto opCall(A, B)(auto ref A a, auto ref B b)
+		{
+			import std.functional : binaryFun;
+			return binaryFun!fun(a, b);
+		}
+	}
+	return Pred.init;
+}
+
+alias sum     = binary!"a+b"; /// Sum predicate.
+alias product = binary!"a*b"; /// Product predicate.
+
+unittest
+{
+	float[2][2] a = [[1,2],[3,4]];
+	assert(a.box.fold!0(sum).valueIterator == [4,6]);
+}
+
+// ----------------------------------------------------------------------------
+
 /// Nullary box wrapping a compile-time value.
 struct Constant(_T, _T value)
 {
 	alias T = _T;
 	enum Shape shape = Shape.init;
 	T opIndex(Index!shape index) const { return value; }
-	auto valueIterator() { return value.only; }
-	auto indexIterator() { return ShapeIterator!shape(); }
+	auto valueIterator() inout { return value.only; }
+	auto indexIterator() const { return ShapeIterator!shape(); }
 }
 static assert(isBoxOf!(Constant!(int, 1), int));
 
@@ -277,8 +318,8 @@ struct Variable(_T)
 	T value;
 	enum Shape shape = Shape.init;
 	T opIndex(Index!shape index) const { return value; }
-	auto valueIterator() { return value.only; }
-	auto indexIterator() { return ShapeIterator!shape(); }
+	auto valueIterator() inout return { return (&value)[0..1]; }
+	auto indexIterator() const { return ShapeIterator!shape(); }
 }
 static assert(isBoxOf!(Variable!int, int));
 
@@ -293,12 +334,12 @@ struct Repeat(Box, size_t n)
 	enum shape = Shape(n ~ Box.shape.dims);
 	Box value;
 
-	auto ref valueIterator()
+	auto ref valueIterator() inout
 	{
 		return value.valueIterator;
 	}
 
-	auto indexIterator() @nogc
+	auto indexIterator() const @nogc
 	{
 		version (none) // Not @nogc
 		{
