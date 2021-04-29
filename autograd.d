@@ -338,6 +338,9 @@ unittest
 
 
 /// Multiplies values in a box along an axis.
+/// Note: if the sign is wrong, the backpropagation step fixes this
+/// by inverting the sign of the first multiplicand,
+/// so that probably should probably be the weight in a NN layer.
 struct Multiply(Parent, size_t axis)
 if (isTensor!Parent)
 {
