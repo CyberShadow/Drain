@@ -30,6 +30,15 @@ struct Shape
 		return Shape(dims[0 .. axis] ~ dims[axis + 1 .. $]);
 	}
 
+	/// Return a `Shape` with the given axes swapped.
+	Shape swapAxes(size_t axis1, size_t axis2)
+	{
+		import std.algorithm.mutation : swap;
+		auto dims = this.dims.dup;
+		swap(dims[axis1], dims[axis2]);
+		return Shape(dims.assumeUnique);
+	}
+
 	/// Returns the shape resulting from the concatenation of the
 	/// given shapes along the given axis.
 	static Shape concatenate(size_t axis, Shape[] shapes...)
@@ -432,4 +441,48 @@ unittest
 	auto b = constant!1.repeat!(Shape([2, 2]));
 	assert(b[Index!(b.shape)([0, 0])] == 1);
 	assert(b[Index!(b.shape)([1, 1])] == 1);
+}
+
+// ----------------------------------------------------------------------------
+
+Index!(shape.swapAxes(axis1, axis2)) swapAxes(size_t axis1, size_t axis2, Shape shape)(Index!shape index)
+{
+	import std.algorithm.mutation : swap;
+	size_t[shape.dims.length] indices = index.indices;
+	swap(indices[axis1], indices[axis2]);
+	return Index!(shape.swapAxes(axis1, axis2))(indices);
+}
+
+struct SwapAxes(Box, size_t axis1, size_t axis2)
+if (isBox!Box)
+{
+	alias T = Box.T;
+	enum shape = Box.shape.swapAxes(axis1, axis2);
+	Box value;
+
+	auto ref valueIterator() inout
+	{
+		return value.valueIterator;
+	}
+
+	auto indexIterator() const @nogc
+	{
+		import std.algorithm.iteration : map, joiner;
+		return value.indexIterator.map!(swapAxes!(axis1, axis2, Box.shape));
+	}
+
+	ref auto opIndex(Index!shape index) inout
+	{
+		return value[index.swapAxes!(axis1, axis2)];
+	}
+}
+SwapAxes!(Box, axis1, axis2) swapAxes(size_t axis1, size_t axis2, Box)(auto ref Box box) if (isBox!Box) { return SwapAxes!(Box, axis1, axis2)(box); } /// ditto
+
+unittest
+{
+	int[2][2] a = [[1, 2], [3, 4]];
+	auto b = a.box;
+	assert(b[Index!(b.shape)([0, 1])] == 2);
+	auto s = b.swapAxes!(0, 1);
+	assert(s[Index!(s.shape)([0, 1])] == 3);
 }
