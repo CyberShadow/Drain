@@ -207,9 +207,11 @@ auto build(Outputs...)(Outputs outputs)
 // ----------------------------------------------------------------------------
 
 
-/// Input tensor.
-/// Wraps a `Box` into a tensor.
-struct Input(Box)
+/// Nullary tensor wrapping a `Box`.
+/// Holds some values.
+/// May or may not be trainable, depending on whether `Box` is writable.
+/// Can be used for inputs, weights, biases...
+struct Value(Box, bool _isInput, bool _isTrainable)
 if (isBox!Box)
 {
 	alias Parents = AliasSeq!(); /// No parents.
@@ -219,67 +221,52 @@ if (isBox!Box)
 	/// No-op.
 	void forward(ref Parents parents) {}
 
-	/// Tells `Graph` to populate `value`.
-	enum isInput = true;
+	/// Tells `Graph` whether populate `value`.
+	enum isInput = _isInput;
+
+	static if (_isTrainable)
+	{
+		Box gradient; /// Gradient input.
+		enum gradientWeights = constant!1.repeat!(Box.shape);
+
+		void backward(ref Parents parents)
+		{
+			foreach (i; gradient.indexIterator)
+			{
+				value[i] += gradient[i];
+				gradient[i] = 0;
+			}
+		}
+	}
 
 	static assert(isTensor!(typeof(this)));
+	static assert(isTrainable!(typeof(this)) == _isTrainable);
 }
 
-auto input(T, Shape shape)()
+alias constant = shapes.constant;
+
+auto constant(R)(R data)
+if (isInputRange!R && isBox!(ElementType!R))
 {
-	return Input!(T, shape)();
+	return Value!(ElementType!R, false, false)();
+} /// ditto
+
+auto variable(R)(R data)
+if (isInputRange!R && isBox!(ElementType!R))
+{
+	return Value!(ElementType!R, false, true)();
 } /// ditto
 
 auto input(R)(R data)
 if (isInputRange!R && isBox!(ElementType!R))
 {
-	return Input!(ElementType!R)();
-} /// ditto
-
-
-// ----------------------------------------------------------------------------
-
-
-/// Trainable input tensor.
-/// Like `Input`, but accepts and applies gradients.
-/// Used for testing backpropagation.
-struct TrainableInput(Box)
-if (isBox!Box)
-{
-	alias Parents = AliasSeq!(); /// No parents.
-
-	Box value; /// Value is fed in by graph methods.
-	Box gradient; /// Gradient input.
-	enum gradientWeights = constant!1.repeat!(Box.shape);
-
-	/// No-op.
-	void forward(ref Parents parents) {}
-
-	/// Tells `Graph` to populate `value`.
-	enum isInput = true;
-
-	void backward(ref Parents parents)
-	{
-		foreach (i; gradient.indexIterator)
-		{
-			value[i] += gradient[i];
-			gradient[i] = 0;
-		}
-	}
-
-	static assert(isTensor!(typeof(this)));
-	static assert(isTrainable!(typeof(this)));
-}
-
-auto trainableInput(T, Shape shape)()
-{
-	return TrainableInput!(T, shape)();
+	return Value!(ElementType!R, true, false)();
 } /// ditto
 
 auto trainableInput(R)(R data)
 if (isInputRange!R && isBox!(ElementType!R))
 {
-	return TrainableInput!(ElementType!R)();
+	return Value!(ElementType!R, true, true)();
 } /// ditto
 
 
