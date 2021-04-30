@@ -293,6 +293,7 @@ unittest
 /// Reduce the dimensionality of `box` by folding all elements along
 /// `axis` using the supplied binary predicate, therefore removing it.
 DenseBox!(Box.T, Box.shape.dropAxis(axis)) fold(size_t axis, Box, Pred)(const auto ref Box box, Pred pred)
+if (isBox!Box)
 {
 	DenseBox!(Box.T, Box.shape.dropAxis(axis)) result;
 	foreach (i; box.indexIterator)
@@ -362,6 +363,7 @@ Variable!T variable(T)(T value) { return Variable!T(value); } /// ditto
 
 /// Adds a dimension to the front of `Box` with length `n`.
 struct Repeat(Box, size_t n)
+if (isBox!Box)
 {
 	alias T = Box.T;
 	enum shape = Shape(n ~ Box.shape.dims);
