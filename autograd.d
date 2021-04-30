@@ -243,31 +243,21 @@ if (isBox!Box)
 	static assert(isTrainable!(typeof(this)) == _isTrainable);
 }
 
-alias constant = shapes.constant;
+/// A non-trainable non-input value.
+alias Constant      (Box) = Value!(Box, false, false);
+auto constant      (R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return Constant      !(ElementType!R)(); } /// ditto
 
-auto constant(R)(R data)
-if (isInputRange!R && isBox!(ElementType!R))
-{
-	return Value!(ElementType!R, false, false)();
-} /// ditto
+/// A trainable non-input value.
+alias Variable      (Box) = Value!(Box, false, true );
+auto variable      (R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return Variable      !(ElementType!R)(); } /// ditto
 
-auto variable(R)(R data)
-if (isInputRange!R && isBox!(ElementType!R))
-{
-	return Value!(ElementType!R, false, true)();
-} /// ditto
+/// A non-trainable input value.
+alias Input         (Box) = Value!(Box, true , false); 
+auto input         (R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return Input         !(ElementType!R)(); } /// ditto
 
-auto input(R)(R data)
-if (isInputRange!R && isBox!(ElementType!R))
-{
-	return Value!(ElementType!R, true, false)();
-} /// ditto
-
-auto trainableInput(R)(R data)
-if (isInputRange!R && isBox!(ElementType!R))
-{
-	return Value!(ElementType!R, true, true)();
-} /// ditto
+/// A trainable input value.
+alias TrainableInput(Box) = Value!(Box, true , true ); 
+auto trainableInput(R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return TrainableInput!(ElementType!R)(); } /// ditto
 
 
 // ----------------------------------------------------------------------------
