@@ -96,7 +96,7 @@ struct Graph(Outputs...)
 	// private enum isInputTensor(Tensor) = is(Tensor == Input!Box, Box);
 	// alias InputTensors = Filter!(isInputTensor, Tensors);
 
-	private enum isInputTensor(alias tensor) = __traits(hasMember, typeof(tensor), q{isInput});
+	private enum isInputTensor(alias tensor) = __traits(hasMember, typeof(tensor), q{isInput}) && typeof(tensor).isInput;
 	private alias inputTensors = Filter!(isInputTensor, tensors);
 
 	private alias TensorValue(Tensor) = typeof(Tensor.value);
