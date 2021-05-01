@@ -7,7 +7,7 @@ import std.traits;
 debug import std.format;
 
 import shapes;
-private import shapes : constant;
+private import shapes : constant, repeat, Repeat, swapAxes, SwapAxes; // Introduce overloads
 
 // ----------------------------------------------------------------------------
 
@@ -524,3 +524,82 @@ unittest
 	assert(graph.tensors[0].value.valueIterator == [2f, 3f]);
 	assert(graph.tensors[1].value.valueIterator == [4f]);
 }
+
+
+// ----------------------------------------------------------------------------
+
+
+/// Adds a dimension to the front of `Parent` with length `n`.
+struct Repeat(Parent, size_t n)
+if (isTensor!Parent)
+{
+	alias Parents = AliasSeq!Parent;
+
+	shapes.Repeat!(typeof(Parent.value), n) value;
+
+	void forward(ref Parents parents)
+	{
+		value.value = parents[0].value;
+	}
+
+	static if (isTrainable!Parent)
+	{
+		typeof(value) gradient;
+		static immutable gradientWeights = Parent.gradientWeights.repeat!n;
+
+		void backward(ref Parents parents, float learningRate)
+		{
+			parents[0].gradient = this.gradient.value;
+			foreach (ref g; this.gradient.value.valueIterator)
+				g = 0;
+		}
+	}
+
+	static assert(isTensor!(typeof(this)));
+	static assert(isTrainable!(typeof(this)) == isTrainable!Parent);
+}
+
+Repeat!(Parent, n) repeat(size_t n, Parent)(Parent parent)
+if (isTensor!Parent)
+{
+	return Repeat!(Parent, n)();
+} /// ditto
+
+
+// ----------------------------------------------------------------------------
+
+
+struct SwapAxes(Parent, size_t axis1, size_t axis2)
+if (isTensor!Parent)
+{
+	alias Parents = AliasSeq!Parent;
+
+	shapes.SwapAxes!(typeof(Parent.value), axis1, axis2) value;
+
+	void forward(ref Parents parents)
+	{
+		value.value = parents[0].value;
+	}
+
+	static if (isTrainable!Parent)
+	{
+		typeof(value) gradient;
+		static immutable gradientWeights = Parent.gradientWeights.swapAxes!(axis1, axis2);
+
+		void backward(ref Parents parents, float learningRate)
+		{
+			parents[0].gradient = this.gradient.value;
+			foreach (ref g; this.gradient.value.valueIterator)
+				g = 0;
+		}
+	}
+
+	static assert(isTensor!(typeof(this)));
+	static assert(isTrainable!(typeof(this)) == isTrainable!Parent);
+}
+
+SwapAxes!(Parent, axis1, axis2) swapAxes(size_t axis1, size_t axis2, Parent)(Parent parent)
+if (isTensor!Parent)
+{
+	return SwapAxes!(Parent, axis1, axis2)();
+} /// ditto
