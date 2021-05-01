@@ -473,7 +473,7 @@ if (allSatisfy!(isTensor, _Parents))
 				auto j = Index!outputShape(i.indices);
 				j[axis] += offset;
 				static if (isTrainable!(typeof(parent)))
-					parent.gradient[i] = gradient[j];
+					parent.gradient[i] += gradient[j];
 				gradient[j] = 0;
 			}
 			offset += parent.value.shape.dims[axis];
