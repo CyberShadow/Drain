@@ -7,6 +7,7 @@ import std.traits;
 debug import std.format;
 
 import shapes;
+private import shapes : constant;
 
 // ----------------------------------------------------------------------------
 
@@ -227,7 +228,7 @@ if (isBox!Box)
 	static if (_isTrainable)
 	{
 		Box gradient; /// Gradient input.
-		enum gradientWeights = constant!1.repeat!(Box.shape);
+		enum gradientWeights = .constant!1.repeat!(Box.shape);
 
 		void backward(ref Parents parents)
 		{
