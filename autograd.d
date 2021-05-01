@@ -102,7 +102,7 @@ struct Graph(Outputs...)
 
 	private alias TensorValue(Tensor) = typeof(Tensor.value);
 
-	enum isTrainable = allSatisfy!(.isTrainable, typeof(outputTensors));
+	private enum isTrainable = allSatisfy!(.isTrainable, typeof(outputTensors));
 
 	private template tensorInstances(SoughtTensors...)
 	{
@@ -142,7 +142,7 @@ struct Graph(Outputs...)
 
 	/// Fit the graph to the given labels.
 	static if (this.isTrainable)
-	void backward(staticMap!(TensorValue, typeof(outputTensors)) output)
+	void backward(staticMap!(TensorValue, typeof(outputTensors)) output, float learningRate = 1)
 	{
 		static foreach (ti; 0 .. outputTensors.length)
 			foreach (i; output[ti].indexIterator)
@@ -150,7 +150,7 @@ struct Graph(Outputs...)
 
 		foreach_reverse (i, ref tensor; tensors)
 			static if (.isTrainable!(typeof(tensor)))
-				tensor.backward(tensorInstances!(typeof(tensor).Parents));
+				tensor.backward(tensorInstances!(typeof(tensor).Parents), learningRate);
 	}
 
 	/// Backpropagate the given labels, and then do a forward pass.
@@ -173,7 +173,7 @@ struct Graph(Outputs...)
 
 		foreach_reverse (i, ref tensor; tensors)
 			static if (.isTrainable!(typeof(tensor)))
-				tensor.backward(tensorInstances!(typeof(tensor).Parents));
+				tensor.backward(tensorInstances!(typeof(tensor).Parents), 1f);
 
 		foreach (i, ref tensor; tensors)
 			tensor.forward(tensorInstances!(typeof(tensor).Parents));
@@ -230,11 +230,11 @@ if (isBox!Box)
 		Box gradient; /// Gradient input.
 		enum gradientWeights = .constant!1.repeat!(Box.shape);
 
-		void backward(ref Parents parents)
+		void backward(ref Parents parents, float learningRate)
 		{
 			foreach (i; gradient.indexIterator)
 			{
-				value[i] += gradient[i];
+				value[i] += gradient[i] * learningRate;
 				gradient[i] = 0;
 			}
 		}
@@ -287,7 +287,7 @@ if (isTensor!Parent)
 	}
 
 	static if (isTrainable!Parent)
-	void backward(ref Parents parents)
+	void backward(ref Parents parents, float learningRate)
 	{
 		static immutable weightTotals = parents[0].gradientWeights.fold!axis(sum);
 		foreach (i; parents[0].gradient.indexIterator)
@@ -354,7 +354,7 @@ if (isTensor!Parent)
 	}
 
 	static if (isTrainable!Parent)
-	void backward(ref Parents parents)
+	void backward(ref Parents parents, float learningRate)
 	{
 		static immutable weightTotals = Parent.gradientWeights.fold!axis(sum);
 		foreach (i; parents[0].gradient.indexIterator)
@@ -463,7 +463,7 @@ if (allSatisfy!(isTensor, _Parents))
 	}
 
 	static if (anySatisfy!(isTrainable, Parents))
-	void backward(ref Parents parents)
+	void backward(ref Parents parents, float learningRate)
 	{
 		size_t offset; // along `axis`
 		foreach (ref parent; parents)
