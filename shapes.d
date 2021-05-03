@@ -342,9 +342,10 @@ unittest
 // ----------------------------------------------------------------------------
 
 /// Nullary box wrapping a compile-time value.
-struct Constant(_T, _T value)
+struct Constant(_T, _T _value)
 {
 	alias T = _T;
+	enum value = _value;
 	enum Shape shape = Shape.init;
 	T opIndex(Index!shape index) const { return value; }
 	auto valueIterator() inout { return value.only; }
