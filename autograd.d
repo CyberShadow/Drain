@@ -1,13 +1,16 @@
 @nogc:
 
+import std.array : staticArray;
 import std.math;
 import std.meta;
+import std.random;
+import std.range;
 import std.range.primitives;
 import std.traits;
 debug import std.format;
 
 import shapes;
-private import shapes : constant, repeat, Repeat, swapAxes, SwapAxes; // Introduce overloads
+private import shapes : constant, Constant, repeat, Repeat, swapAxes, SwapAxes; // Introduce overloads
 
 // ----------------------------------------------------------------------------
 
@@ -48,17 +51,182 @@ if (isTensor!Tensor)
 		/// Read by this tensor`s `backward` function.
 		&& isBox!(typeof(Tensor.gradient))
 		&& Tensor.gradient.shape == Tensor.value.shape
-
-		/// Tells children how to distribute the gradient among its parents.
-		/// Should be evaluatable at compile time.
-		&& isBox!(typeof(Tensor.gradientWeights))
-		&& Tensor.gradientWeights.shape == Tensor.value.shape
 	;
 }
 
 
-/// Type used to represent gradient weights.
-alias GradientWeight = uint;
+/// Whether optimizers should adjust this tensor's values.
+template isOptimizable(Tensor)
+if (isTensor!Tensor)
+{
+	enum isOptimizable = true
+		&& isTrainable!Tensor
+
+		&& __traits(hasMember, Tensor, q{isOptimizable})
+		&& Tensor.isOptimizable
+	;
+}
+
+
+// ----------------------------------------------------------------------------
+
+
+struct NullOptimizer(LearningRate = Constant!(float, 0.1f))
+{
+	LearningRate learningRate;
+
+	struct Instance(Tensors...)
+	{
+		LearningRate learningRate;
+
+		void run(Tensor)(ref Tensor tensor)
+		{
+			foreach (i; tensor.value.indexIterator)
+				tensor.value[i] -= tensor.gradient[i] * learningRate.value;
+		}
+	}
+
+	Instance!Tensors initialize(Tensors...)(ref Tensors tensors)
+	{
+		Instance!Tensors instance;
+		instance.learningRate = learningRate;
+		return instance;
+	}
+}
+
+
+struct AdaGrad(
+	LearningRate = Constant!(float, 0.1f),
+	Eps = Constant!(float, 1e-8f),
+)
+{
+	LearningRate learningRate;
+	Eps eps;
+
+	struct StorageFor(Tensor)
+	if (isTensor!Tensor)
+	{
+		static if (isOptimizable!Tensor)
+		{
+			typeof(Tensor.value) m; // memory
+		}
+	}
+
+	struct Instance(Tensors...)
+	{
+		LearningRate learningRate;
+		Eps eps;
+
+		staticMap!(StorageFor, Tensors) storage;
+		alias storageFor(Tensor) = storage[staticIndexOf!(StorageFor!Tensor, typeof(storage))];
+
+		void run(Tensor)(ref Tensor tensor)
+		{
+			foreach (i; tensor.value.indexIterator)
+			{
+				auto m = storageFor!Tensor.m[i];
+				auto g = tensor.gradient[i];
+				auto mn = m + g * g;
+				auto diff = g / sqrt(mn + eps.value);
+				storageFor!Tensor.m[i] = mn;
+
+				// debug { import std.stdio; writefln("AdaGrad: Adjusting value at %s from %s to %s (for %s)",
+				// 		i,
+				// 		tensor.value[i],
+				// 		tensor.value[i] + diff * -learningRate.value,
+				// 		Tensor.stringof
+				// 	); }
+				tensor.value[i] += diff * -learningRate.value;
+			}
+		}
+	}
+
+	Instance!Tensors initialize(Tensors...)(ref Tensors tensors)
+	{
+		Instance!Tensors instance;
+		instance.learningRate = learningRate;
+		instance.eps = eps;
+		foreach (i, ref s; instance.storage)
+			static if (isOptimizable!(Tensors[i]))
+				foreach (ref v; s.m.valueIterator)
+					v = 0;
+		return instance;
+	}
+}
+
+
+struct ADAM(
+	LearningRate = Constant!(float, 0.1f),
+	Beta1 = Constant!(float, 0.9),
+	Beta2 = Constant!(float, 0.999),
+	Eps   = Constant!(float, 1e-8f),
+)
+{
+	LearningRate learningRate;
+	Beta1 beta1;
+	Beta2 beta2;
+	Eps eps;
+
+	struct StorageFor(Tensor)
+	if (isTensor!Tensor)
+	{
+		static if (isOptimizable!Tensor)
+		{
+			typeof(Tensor.value) m1, m2; // memory
+		}
+	}
+
+	struct Instance(Tensors...)
+	{
+		LearningRate learningRate;
+		Beta1 beta1;
+		Beta2 beta2;
+		Eps eps;
+
+		staticMap!(StorageFor, Tensors) storage;
+		alias storageFor(Tensor) = storage[staticIndexOf!(StorageFor!Tensor, typeof(storage))];
+
+		void run(Tensor)(ref Tensor tensor)
+		{
+			foreach (i; tensor.value.indexIterator)
+			{
+				auto m1 = storageFor!Tensor.m1[i];
+				auto m2 = storageFor!Tensor.m2[i];
+				auto g = tensor.gradient[i];
+				auto nextM1 = (1.0 - beta1.value) * (g     - m1) + m1;
+				auto nextM2 = (1.0 - beta2.value) * (g * g - m2) + m2;
+				auto diff = nextM1 / sqrt(nextM2 + eps.value);
+				storageFor!Tensor.m1[i] = nextM1;
+				storageFor!Tensor.m2[i] = nextM2;
+
+				// debug { import std.stdio; writefln("ADAM: Adjusting value at %s from %s to %s (for %s)",
+				// 		i,
+				// 		tensor.value[i],
+				// 		tensor.value[i] + diff * -learningRate.value,
+				// 		Tensor.stringof
+				// 	); }
+				tensor.value[i] += diff * -learningRate.value;
+			}
+		}
+	}
+
+	Instance!Tensors initialize(Tensors...)(ref Tensors tensors)
+	{
+		Instance!Tensors instance;
+		instance.learningRate = learningRate;
+		instance.eps = eps;
+		instance.beta1 = beta1;
+		instance.beta2 = beta2;
+		foreach (i, ref s; instance.storage)
+			static if (isOptimizable!(Tensors[i]))
+			{
+				foreach (ref v; s.m1.valueIterator) v = 0;
+				foreach (ref v; s.m2.valueIterator) v = 0;
+			}
+		return instance;
+	}
+}
+
 
 // ----------------------------------------------------------------------------
 
@@ -85,7 +253,7 @@ private template SortTensors(Tensors...)
 
 /// A computation graph, supporting
 /// both forward and backpropagation.
-struct Graph(Outputs...)
+struct Graph(Optimizer, Outputs...)
 {
 	alias Tensors = SortTensors!Outputs;
 
@@ -117,7 +285,10 @@ struct Graph(Outputs...)
 
 	private alias outputTensors = tensorInstances!Outputs;
 
-	private void initialize()
+	private alias OptimizerInstance = typeof(Optimizer.init.initialize(tensors));
+	OptimizerInstance optimizer;
+
+	this(ref Optimizer optimizer)
 	{
 		// Clear the initial gradients (as they are probably NaN by default).
 		// After this one-time initialization, they should be cleared
@@ -128,6 +299,8 @@ struct Graph(Outputs...)
 				foreach (ref g; tensor.gradient.valueIterator)
 					g = 0;
 		}
+
+		this.optimizer = optimizer.initialize(tensors);
 	}
 
 	/// Calculate output from the given input.
@@ -142,50 +315,54 @@ struct Graph(Outputs...)
 
 	/// Fit the graph to the given labels.
 	static if (this.isTrainable)
-	void backward(staticMap!(TensorValue, typeof(outputTensors)) output, float learningRate = 1)
+	void backward(staticMap!(TensorValue, typeof(outputTensors)) output)
 	{
 		static foreach (ti; 0 .. outputTensors.length)
 			foreach (i; output[ti].indexIterator)
-				outputTensors[ti].gradient[i] = output[ti][i] - outputTensors[ti].value[i];
+				outputTensors[ti].gradient[i] = outputTensors[ti].value[i] - output[ti][i];
 
 		foreach_reverse (i, ref tensor; tensors)
-			static if (.isTrainable!(typeof(tensor)))
-				tensor.backward(tensorInstances!(typeof(tensor).Parents), learningRate);
-	}
-
-	/// Backpropagate the given labels, and then do a forward pass.
-	/// Assert that the result of the forward pass matches label.
-	/// Used to test differentiation.
-	static if (this.isTrainable)
-	void testGradient(staticMap!(TensorValue, typeof(outputTensors)) output)
-	{
-		// Clear gradients
-		foreach_reverse (ti, ref tensor; tensors)
 		{
+			static if (.isOptimizable!(typeof(tensor)))
+				optimizer.run(tensor);
 			static if (.isTrainable!(typeof(tensor)))
-				foreach (ref g; tensor.gradient.valueIterator)
-					g = 0;
+				tensor.backward(tensorInstances!(typeof(tensor).Parents));
 		}
-
-		static foreach (ti; 0 .. outputTensors.length)
-			foreach (i; output[ti].indexIterator)
-				outputTensors[ti].gradient[i] = output[ti][i] - outputTensors[ti].value[i];
-
-		foreach_reverse (i, ref tensor; tensors)
-			static if (.isTrainable!(typeof(tensor)))
-				tensor.backward(tensorInstances!(typeof(tensor).Parents), 1f);
-
-		foreach (i, ref tensor; tensors)
-			tensor.forward(tensorInstances!(typeof(tensor).Parents));
-
-		static foreach (ti; 0 .. outputTensors.length)
-			foreach (i; output[ti].indexIterator)
-				debug assert(approxEqual(output[ti][i], outputTensors[ti].value[i]),
-					format("Wrong output after fitting. Expected: %s, got: %s",
-						output[ti][i], outputTensors[ti].value[i],
-					),
-				);
 	}
+
+	// /// Backpropagate the given labels, and then do a forward pass.
+	// /// Assert that the result of the forward pass matches label.
+	// /// Used to test differentiation.
+	// static if (this.isTrainable)
+	// void testGradient(staticMap!(TensorValue, typeof(outputTensors)) output)
+	// {
+	// 	// Clear gradients
+	// 	foreach_reverse (ti, ref tensor; tensors)
+	// 	{
+	// 		static if (.isTrainable!(typeof(tensor)))
+	// 			foreach (ref g; tensor.gradient.valueIterator)
+	// 				g = 0;
+	// 	}
+
+	// 	static foreach (ti; 0 .. outputTensors.length)
+	// 		foreach (i; output[ti].indexIterator)
+	// 			outputTensors[ti].gradient[i] = output[ti][i] - outputTensors[ti].value[i];
+
+	// 	foreach_reverse (i, ref tensor; tensors)
+	// 		static if (.isTrainable!(typeof(tensor)))
+	// 			tensor.backward(tensorInstances!(typeof(tensor).Parents));
+
+	// 	foreach (i, ref tensor; tensors)
+	// 		tensor.forward(tensorInstances!(typeof(tensor).Parents));
+
+	// 	static foreach (ti; 0 .. outputTensors.length)
+	// 		foreach (i; output[ti].indexIterator)
+	// 			debug assert(approxEqual(output[ti][i], outputTensors[ti].value[i]),
+	// 				format("Wrong output after fitting. Expected: %s, got: %s",
+	// 					output[ti][i], outputTensors[ti].value[i],
+	// 				),
+	// 			);
+	// }
 }
 
 
@@ -197,11 +374,9 @@ struct Graph(Outputs...)
 /// a parent or child) is not sufficient.
 /// Instead, we order the tensors topologically
 /// and invoke them in that order.
-auto build(Outputs...)(Outputs outputs)
+auto graph(Optimizer, Outputs...)(Optimizer optimizer, Outputs outputs)
 {
-	auto g = Graph!Outputs();
-	g.initialize();
-	return g;
+	return Graph!(Optimizer, Outputs)(optimizer);
 }
 
 
@@ -225,23 +400,23 @@ if (isBox!Box)
 	/// Tells `Graph` whether populate `value`.
 	enum isInput = _isInput;
 
+	/// Tells optimizers whether to adjust `value`.
+	enum isOptimizable = _isTrainable;
+
 	static if (_isTrainable)
 	{
 		Box gradient; /// Gradient input.
-		enum gradientWeights = .constant!1.repeat!(Box.shape);
 
-		void backward(ref Parents parents, float learningRate)
+		void backward(ref Parents parents)
 		{
 			foreach (i; gradient.indexIterator)
-			{
-				value[i] += gradient[i] * learningRate;
 				gradient[i] = 0;
-			}
 		}
 	}
 
 	static assert(isTensor!(typeof(this)));
 	static assert(isTrainable!(typeof(this)) == _isTrainable);
+	static assert(.isOptimizable!(typeof(this)) == _isTrainable);
 }
 
 /// A non-trainable non-input value.
@@ -273,10 +448,7 @@ if (isTensor!Parent)
 
 	DenseBox!(T, Parent.value.shape.dropAxis(axis)) value;
 	static if (isTrainable!Parent)
-	{
 		typeof(value) gradient;
-		static immutable gradientWeights = Parent.gradientWeights.fold!axis(sum);
-	}
 
 	void forward(ref Parents parents)
 	{
@@ -284,16 +456,26 @@ if (isTensor!Parent)
 			v = 0;
 		foreach (i; parents[0].value.indexIterator)
 			value[i.dropAxis!axis] += parents[0].value[i];
+		// debug
+		// {
+		// 	(ref Parents parents){
+		// 		import std.stdio, std.algorithm;
+		// 		foreach (j; value.indexIterator)
+		// 			writefln("%(%s + %) = %s",
+		// 				parents[0].value.indexIterator.filter!(i => i.dropAxis!axis == j).map!(i => parents[0].value[i]),
+		// 				value[j],
+		// 			);
+		// 	}(parents);
+		// }
 	}
 
 	static if (isTrainable!Parent)
-	void backward(ref Parents parents, float learningRate)
+	void backward(ref Parents parents)
 	{
-		static immutable weightTotals = parents[0].gradientWeights.fold!axis(sum);
 		foreach (i; parents[0].gradient.indexIterator)
 		{
 			auto j = i.dropAxis!axis;
-			parents[0].gradient[i] += this.gradient[j] * parents[0].gradientWeights[i] / weightTotals[j];
+			parents[0].gradient[i] = this.gradient[j];
 		}
 		foreach (ref g; this.gradient.valueIterator)
 			g = 0;
@@ -311,17 +493,18 @@ if (isTensor!Parent)
 unittest
 {
 	float[2][1] inputData = [[1f, 2f]];
-	auto graph = inputData[].boxes
+	auto graph = graph(NullOptimizer!()(),
+		inputData[].boxes
 		.trainableInput
 		.add
-		.build;
+	);
 
 	graph.forward(inputData[0].box);
 	assert(graph.tensors[$-1].value.valueIterator.front == 3f);
 
-	float label = 5f;
-	graph.testGradient(label.box);
-	assert(graph.tensors[0].value.valueIterator == [2f, 3f]);
+	// float label = 5f;
+	// graph.testGradient(label.box);
+	// assert(graph.tensors[0].value.valueIterator == [2f, 3f]);
 }
 
 
@@ -340,10 +523,7 @@ if (isTensor!Parent)
 
 	DenseBox!(T, Parent.value.shape.dropAxis(axis)) value;
 	static if (isTrainable!Parent)
-	{
 		typeof(value) gradient;
-		static immutable gradientWeights = Parent.gradientWeights.fold!axis(sum);
-	}
 
 	void forward(ref Parents parents)
 	{
@@ -351,32 +531,38 @@ if (isTensor!Parent)
 			v = 1;
 		foreach (i; parents[0].value.indexIterator)
 			value[i.dropAxis!axis] *= parents[0].value[i];
+		// debug
+		// {
+		// 	(ref Parents parents){
+		// 		import std.stdio, std.algorithm;
+		// 		foreach (j; value.indexIterator)
+		// 			writefln("%(%s * %) = %s",
+		// 				parents[0].value.indexIterator.filter!(i => i.dropAxis!axis == j).map!(i => parents[0].value[i]),
+		// 				value[j],
+		// 			);
+		// 	}(parents);
+		// }
 	}
 
 	static if (isTrainable!Parent)
-	void backward(ref Parents parents, float learningRate)
+	void backward(ref Parents parents)
 	{
-		static immutable weightTotals = Parent.gradientWeights.fold!axis(sum);
 		foreach (i; parents[0].gradient.indexIterator)
 		{
 			auto j = i.dropAxis!axis;
-			auto x = parents[0].value[i];
-			auto logx = log(abs(x));
-			auto y = this.value[j];
-			auto logy = log(abs(y));
-			auto yg = this.gradient[j];
-			auto y2 = y + yg;
-			auto logy2 = log(abs(y2));
-			auto logyg = logy2 - logy;
-			auto logx2 = logx + (logyg * parents[0].gradientWeights[i] / weightTotals[i.dropAxis!axis]);
-			auto x2 = exp(logx2) * sgn(x);
-			if (sgn(y) != sgn(y2))
-				if (i.indices[axis] == 0)
-					x2 = -x2;
-			auto xg = x2 - x;
 
-			parents[0].gradient[i] += xg;
+			T otherProduct = 1;
+			foreach (row; 0 .. Parent.value.shape.dims[axis])
+				if (row != i.indices[axis])
+				{
+					auto i2 = i;
+					i2.indices[axis] = row;
+					otherProduct *= parents[0].value[i2];
+				}
+
+			parents[0].gradient[i] += this.gradient[j] * otherProduct;
 		}
+
 		foreach (ref g; this.gradient.valueIterator)
 			g = 0;
 	}
@@ -393,21 +579,22 @@ if (isTensor!Parent)
 unittest
 {
 	float[2][1] inputData = [[2f, 3f]];
-	auto graph = inputData[].boxes
+	auto graph = graph(NullOptimizer!()(),
+		inputData[].boxes
 		.trainableInput
 		.multiply
-		.build;
+	);
 
 	graph.forward(inputData[0].box);
 	assert(graph.tensors[$-1].value.valueIterator.front == 6f);
 
-	float label = 24f;
-	graph.testGradient(label.box);
-	assert(graph.tensors[0].value.valueIterator == [4f, 6f]);
+	// float label = 24f;
+	// graph.testGradient(label.box);
+	// assert(graph.tensors[0].value.valueIterator == [4f, 6f]);
 
-	label = -24f;
-	graph.testGradient(label.box);
-	assert(graph.tensors[0].value.valueIterator == [-4f, 6f]);
+	// label = -24f;
+	// graph.testGradient(label.box);
+	// assert(graph.tensors[0].value.valueIterator == [-4f, 6f]);
 }
 
 
@@ -427,25 +614,7 @@ if (allSatisfy!(isTensor, _Parents))
 
 	DenseBox!(T, outputShape) value;
 	static if (anySatisfy!(isTrainable, Parents))
-	{
 		typeof(value) gradient;
-		static immutable gradientWeights = (){
-			DenseBox!(GradientWeight, value.shape) result;
-			size_t offset; // along `axis`
-			foreach (Parent; Parents)
-			{
-				static if (isTrainable!Parent)
-					foreach (i; Parent.gradientWeights.indexIterator)
-					{
-						auto j = Index!outputShape(i.indices);
-						j[axis] += offset;
-						result[j] = Parent.gradientWeights[i];
-					}
-				offset += Parent.value.shape.dims[axis];
-			}
-			return result;
-		}();
-	}
 
 	void forward(ref Parents parents)
 	{
@@ -463,7 +632,7 @@ if (allSatisfy!(isTensor, _Parents))
 	}
 
 	static if (anySatisfy!(isTrainable, Parents))
-	void backward(ref Parents parents, float learningRate)
+	void backward(ref Parents parents)
 	{
 		size_t offset; // along `axis`
 		foreach (ref parent; parents)
@@ -493,12 +662,13 @@ unittest
 {
 	float[2][1] input1 = [[1f, 2f]];
 	float[1][1] input2 = [[3f]];
-	auto graph = concatenate!0
+	auto graph = graph(NullOptimizer!()(),
+		concatenate!0
 		(
 			input1[].boxes.input,
 			input2[].boxes.input,
 		)
-		.build;
+	);
 
 	graph.forward(input1[0].box, input2[0].box);
 	assert(graph.tensors[$-1].value.valueIterator == [1, 2, 3]);
@@ -508,21 +678,22 @@ unittest
 {
 	float[2][1] input1 = [[1f, 2f]];
 	float[1][1] input2 = [[3f]];
-	auto graph = concatenate!0
+	auto graph = graph(NullOptimizer!()(),
+		concatenate!0
 		(
 			input1[].boxes.trainableInput,
 			input2[].boxes.trainableInput,
 		)
 		.add!0
-		.build;
+	);
 
 	graph.forward(input1[0].box, input2[0].box);
 	assert(graph.tensors[$-1].value.valueIterator == [6]);
 
-	float label = 9f;
-	graph.testGradient(label.box);
-	assert(graph.tensors[0].value.valueIterator == [2f, 3f]);
-	assert(graph.tensors[1].value.valueIterator == [4f]);
+	// float label = 9f;
+	// graph.testGradient(label.box);
+	// assert(graph.tensors[0].value.valueIterator == [2f, 3f]);
+	// assert(graph.tensors[1].value.valueIterator == [4f]);
 }
 
 
@@ -545,9 +716,8 @@ if (isTensor!Parent)
 	static if (isTrainable!Parent)
 	{
 		typeof(value) gradient;
-		static immutable gradientWeights = Parent.gradientWeights.repeat!n;
 
-		void backward(ref Parents parents, float learningRate)
+		void backward(ref Parents parents)
 		{
 			parents[0].gradient = this.gradient.value;
 			foreach (ref g; this.gradient.value.valueIterator)
@@ -584,9 +754,8 @@ if (isTensor!Parent)
 	static if (isTrainable!Parent)
 	{
 		typeof(value) gradient;
-		static immutable gradientWeights = Parent.gradientWeights.swapAxes!(axis1, axis2);
 
-		void backward(ref Parents parents, float learningRate)
+		void backward(ref Parents parents)
 		{
 			parents[0].gradient = this.gradient.value;
 			foreach (ref g; this.gradient.value.valueIterator)
@@ -603,3 +772,95 @@ if (isTensor!Parent)
 {
 	return SwapAxes!(Parent, axis1, axis2)();
 } /// ditto
+
+
+// ----------------------------------------------------------------------------
+
+
+auto linearDense(size_t numOutputs, Parent)(Parent parent)
+{
+	// Assume first axis is the batch size
+	enum batchSize = Parent.value.shape.dims[0];
+	enum inputShape = Parent.value.shape.dropAxis(0);
+
+	auto weights = Variable!(DenseBox!(Parent.value.T, Shape(numOutputs ~ inputShape.dims)))();
+	auto biases  = Variable!(DenseBox!(Parent.value.T, inputShape))();
+	return
+		concatenate(
+			concatenate(
+				weights
+				.repeat!batchSize
+				.swapAxes!(0, 1)
+				.repeat!1
+				,
+				parent
+				.repeat!numOutputs
+				.repeat!1
+				,
+			)
+			.multiply,
+			biases
+			.repeat!batchSize
+			.repeat!1,
+		)
+		.add;
+}
+
+unittest
+{
+	import std.random;
+	rndGen.seed(0);
+
+	auto inputData = [[1f].staticArray, [2f].staticArray, [3f].staticArray].staticArray;
+	auto labelData = [[3f].staticArray, [5f].staticArray, [7f].staticArray].staticArray;
+	auto graph = graph(ADAM!()(),
+		inputData[].boxes
+		.input
+		.linearDense!1
+	);
+
+	foreach (ref tensor; graph.tensors)
+		foreach (ref v; tensor.value.valueIterator)
+			v = 0.5;
+
+	foreach (epoch; 0 .. 1000)
+	{
+		// debug { import std.stdio; writefln("\n=== Epoch %d ===", epoch); }
+		foreach (i; inputData.length.iota/*.randomCover*/)
+		{
+			// debug { import std.stdio; writefln("--- %s -> %s :", inputData[i], labelData[i]); }
+			graph.forward (inputData[i].box);
+			graph.backward(labelData[i].box);
+		}
+	}
+
+	foreach (i; 0 .. inputData.length)
+	{
+		graph.forward(inputData[i].box);
+		assert(isClose(graph.tensors[$-1].value.valueIterator.front, labelData[i][0]));
+	}
+
+	// debug
+	// {
+	// 	import std.stdio;
+	// 	foreach (ref tensor; graph.tensors)
+	// 		writeln(tensor.value.valueIterator, " ", typeof(tensor).stringof);
+
+	// 	foreach (i; 0 .. inputData.length)
+	// 	{
+	// 		graph.forward (inputData[i].box);
+	// 		writeln(graph.tensors[$-1].value.valueIterator);
+	// 	}
+	// }
+
+	// graph.forward(inputData[0].box);
+	// assert(graph.tensors[$-1].value.valueIterator.front == 6f);
+
+	// // float label = 24f;
+	// // graph.testGradient(label.box);
+	// assert(graph.tensors[0].value.valueIterator == [4f, 6f]);
+
+	// // label = -24f;
+	// // graph.testGradient(label.box);
+	// // assert(graph.tensors[0].value.valueIterator == [-4f, 6f]);
+}
