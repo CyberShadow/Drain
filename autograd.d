@@ -858,61 +858,105 @@ auto linearDense(Shape outputShape, Parent)(Parent parent)
 
 auto linearDense(size_t numOutputs, Parent)(Parent parent) { return linearDense!(Shape([numOutputs]))(parent); }
 
-unittest
-{
-	import std.random;
-	rndGen.seed(0);
 
-	auto inputData = [[1f].staticArray, [2f].staticArray, [3f].staticArray].staticArray;
-	auto labelData = [[3f].staticArray, [5f].staticArray, [7f].staticArray].staticArray;
-	auto graph = graph(ADAM!()(),
-		inputData[].boxes
-		.input
-		.linearDense!(Shape([]))
-	);
+// ----------------------------------------------------------------------------
+
+
+// debug=verbose;
+
+
+version (unittest)
+private void testProblem(Graph, Input, Output, size_t numObservations)(
+	Graph graph,
+	ref Input[numObservations] inputs,
+	ref Output[numObservations] labels,
+)
+{
+	assert(inputs.length == labels.length);
 
 	foreach (ref tensor; graph.tensors)
 		foreach (ref v; tensor.value.valueIterator)
-			v = 0.5;
+			v = uniform01!float;
 
 	foreach (epoch; 0 .. 1000)
 	{
-		// debug { import std.stdio; writefln("\n=== Epoch %d ===", epoch); }
-		foreach (i; inputData.length.iota/*.randomCover*/)
+		debug (verbose) { import std.stdio; writefln("\n=== Epoch %d ===", epoch); }
+		foreach (i; numObservations.iota/*.randomCover*/)
 		{
-			// debug { import std.stdio; writefln("--- %s -> %s :", inputData[i], labelData[i]); }
-			graph.forward (inputData[i].box);
-			graph.backward(labelData[i].box);
+			debug (verbose) { import std.stdio; writefln("--- %s -> %s :", inputs[i], labels[i]); }
+			graph.forward (inputs[i].box);
+			graph.backward(labels[i].box);
 		}
 	}
 
-	foreach (i; 0 .. inputData.length)
+	foreach (i; 0 .. numObservations)
 	{
-		graph.forward(inputData[i].box);
-		assert(isClose(graph.tensors[$-1].value.valueIterator.front, labelData[i][0]));
+		graph.forward(inputs[i].box);
+		auto output = graph.tensors[$-1].value.valueIterator.front;
+		auto label = labels[i].box.valueIterator.front;
+		debug (verbose) { import std.stdio; writefln("%s -> %s / %s", inputs[i], output, label); }
+		assert(isClose(output, label));
+	}
+}
+
+/// Simple add+multiply (one layer, one input, one output, one bias, one weight)
+unittest
+{
+	rndGen.seed(0);
+
+	enum numSamples = 16;
+
+	float[1][numSamples] inputs;
+	float[1][numSamples] labels;
+	foreach (i; 0 .. numSamples)
+	{
+		enum scale = 1f;
+		inputs[i] = [uniform01!float * scale];
+		labels[i] = [inputs[i][0] * 3f * scale + 4f * scale];
 	}
 
-	// debug
-	// {
-	// 	import std.stdio;
-	// 	foreach (ref tensor; graph.tensors)
-	// 		writeln(tensor.value.valueIterator, " ", typeof(tensor).stringof);
+	auto graph = graph(ADAM!()(),
+		inputs[].boxes
+		.input
+		.linearDense!(Shape())
+	);
+	testProblem(graph, inputs, labels);
+}
 
-	// 	foreach (i; 0 .. inputData.length)
-	// 	{
-	// 		graph.forward (inputData[i].box);
-	// 		writeln(graph.tensors[$-1].value.valueIterator);
-	// 	}
-	// }
+/// Ditto (old test)
+unittest
+{
+	rndGen.seed(0);
 
-	// graph.forward(inputData[0].box);
-	// assert(graph.tensors[$-1].value.valueIterator.front == 6f);
+	float[1][3] inputs = [[1], [2], [3]];
+	float[1][3] labels = [[3], [5], [7]];
+	auto graph = graph(ADAM!()(),
+		inputs[].boxes
+		.input
+		.linearDense!(Shape())
+	);
+	testProblem(graph, inputs, labels);
+}
 
-	// // float label = 24f;
-	// // graph.testGradient(label.box);
-	// assert(graph.tensors[0].value.valueIterator == [4f, 6f]);
+/// Simple add+multiply of two inputs (one layer, two inputs, one output, one bias, two weights)
+unittest
+{
+	rndGen.seed(0);
 
-	// // label = -24f;
-	// // graph.testGradient(label.box);
-	// // assert(graph.tensors[0].value.valueIterator == [-4f, 6f]);
+	enum numSamples = 16;
+
+	float[2][numSamples][1] inputs;
+	float[1][numSamples][1] labels;
+	foreach (i; 0 .. numSamples)
+	{
+		inputs[0][i] = [uniform01!float, uniform01!float];
+		labels[0][i] = [inputs[0][i][0] * 3f + inputs[0][i][1] * 4f + 5f];
+	}
+
+	auto graph = graph(ADAM!()(),
+		inputs[].boxes
+		.input
+		.linearDense!1
+	);
+	testProblem(graph, inputs, labels);
 }
