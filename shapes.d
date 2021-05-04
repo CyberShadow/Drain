@@ -30,6 +30,20 @@ struct Shape
 		return Shape(dims[0 .. axis] ~ dims[axis + 1 .. $]);
 	}
 
+	/// Return a `Shape` with the given `axes` removed.
+	/// `axes` should be in ascending order.
+	Shape dropAxes(scope size_t[] axes)
+	{
+		if (axes.length == 0)
+			return this;
+		else
+		{
+			if (axes.length > 1)
+				assert(axes[$-2] < axes[$-1]);
+			return dropAxis(axes[$-1]).dropAxes(axes[0 .. $-1]);
+		}
+	}
+
 	/// Return a `Shape` with the given axes swapped.
 	Shape swapAxes(size_t axis1, size_t axis2)
 	{
@@ -91,6 +105,20 @@ struct Index(Shape _shape)
 	Index!(shape.dropAxis(axis)) dropAxis(size_t axis)() const
 	{
 		return Index!(shape.dropAxis(axis))(sconcat(indices[0 .. axis], indices[axis + 1 .. $]));
+	}
+
+	/// Return an `Index` with the given `axes` removed.
+	/// `axes` should be in ascending order.
+	Index!(shape.dropAxes(axes)) dropAxes(size_t[] axes)()
+	{
+		static if (axes.length == 0)
+			return this;
+		else
+		{
+			static if (axes.length > 1)
+				static assert(axes[$-2] < axes[$-1]);
+			return dropAxis!(axes[$-1]).dropAxes!(axes[0 .. $-1]);
+		}
 	}
 }
 
