@@ -706,13 +706,13 @@ unittest
 // ----------------------------------------------------------------------------
 
 
-/// Adds a dimension to the front of `Parent` with length `n`.
-struct Repeat(Parent, size_t n)
+/// Adds dimensions to the front of `Parent` with the given shape.
+struct Repeat(Parent, Shape shape, size_t where)
 if (isTensor!Parent)
 {
 	alias Parents = AliasSeq!Parent;
 
-	shapes.Repeat!(typeof(Parent.value), n) value;
+	typeof(shapes.repeat!(shape, where)(Parent.value)) value;
 
 	void forward(ref Parents parents)
 	{
@@ -736,10 +736,16 @@ if (isTensor!Parent)
 	static assert(isTrainable!(typeof(this)) == isTrainable!Parent);
 }
 
-Repeat!(Parent, n) repeat(size_t n, Parent)(Parent parent)
+Repeat!(Parent, shape, where) repeat(Shape shape, size_t where = 0, Parent)(Parent parent)
 if (isTensor!Parent)
 {
-	return Repeat!(Parent, n)();
+	return Repeat!(Parent, shape, where)();
+} /// ditto
+
+Repeat!(Parent, Shape([n]), where) repeat(size_t n, size_t where = 0, Parent)(Parent parent)
+if (isTensor!Parent)
+{
+	return Repeat!(Parent, Shape([n]), where)();
 } /// ditto
 
 
