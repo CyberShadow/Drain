@@ -1086,7 +1086,7 @@ unittest
 {
 	// We're using few units and non-leaky
 	// ReLUs, so the seed is important
-	rndGen.seed(5);
+	rndGen.seed(0);
 
 	enum numSamples = 4;
 
@@ -1101,7 +1101,7 @@ unittest
 	auto graph = graph(ADAM!(Constant!(float, 0.01f))(),
 		inputs[].boxes
 		.input
-		.linearDense!8
+		.linearDense!4
 		.relu
 		.linearDense!1
 	);
