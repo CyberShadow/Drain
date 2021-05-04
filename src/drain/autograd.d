@@ -1,3 +1,5 @@
+module drain.autograd;
+
 @nogc:
 
 import std.algorithm.mutation : swap;

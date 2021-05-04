@@ -1,3 +1,5 @@
+module drain.shapes;
+
 import std.algorithm.iteration;
 import std.algorithm.searching : startsWith;
 import std.exception : assumeUnique;
