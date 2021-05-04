@@ -12,6 +12,9 @@ debug import std.format;
 import shapes;
 private import shapes : constant, Constant, repeat, Repeat, swapAxes, SwapAxes; // Introduce overloads
 
+// debug = verbose;
+debug (verbose) import std.stdio;
+
 // ----------------------------------------------------------------------------
 
 /// Tensor definition.
@@ -136,12 +139,12 @@ struct AdaGrad(
 				auto diff = g / sqrt(mn + eps.value);
 				storageFor!Tensor.m[i] = mn;
 
-				// debug { import std.stdio; writefln("AdaGrad: Adjusting value at %s from %s to %s (for %s)",
-				// 		i,
-				// 		tensor.value[i],
-				// 		tensor.value[i] + diff * -learningRate.value,
-				// 		Tensor.stringof
-				// 	); }
+				debug (verbose) writefln("AdaGrad: Adjusting value at %s from %s to %s (for %s)",
+					i,
+					tensor.value[i],
+					tensor.value[i] + diff * -learningRate.value,
+					Tensor.stringof
+				);
 				tensor.value[i] += diff * -learningRate.value;
 			}
 		}
@@ -205,12 +208,12 @@ struct ADAM(
 				storageFor!Tensor.m1[i] = nextM1;
 				storageFor!Tensor.m2[i] = nextM2;
 
-				// debug { import std.stdio; writefln("ADAM: Adjusting value at %s from %s to %s (for %s)",
-				// 		i,
-				// 		tensor.value[i],
-				// 		tensor.value[i] + diff * -learningRate.value,
-				// 		Tensor.stringof
-				// 	); }
+				debug (verbose) writefln("ADAM: Adjusting value at %s from %s to %s (for %s)",
+					i,
+					tensor.value[i],
+						tensor.value[i] + diff * -learningRate.value,
+					Tensor.stringof
+				);
 				tensor.value[i] += diff * -learningRate.value;
 			}
 		}
@@ -262,6 +265,13 @@ private template SortTensors(Tensors...)
 struct Graph(Optimizer, Outputs...)
 {
 	alias Tensors = SortTensors!Outputs;
+
+	debug (verbose)
+	{
+		pragma(msg, "Graph tensors:");
+		static foreach (Tensor; Tensors)
+			pragma(msg, Tensor.name);
+	}
 
 	/// All tensors forming this computational graph,
 	/// in topological order (inputs first, outputs last).
@@ -464,17 +474,17 @@ if (isTensor!Parent)
 			v = 0;
 		foreach (i; parents[0].value.indexIterator)
 			value[i.dropAxes!axes] += parents[0].value[i];
-		// debug
-		// {
-		// 	(ref Parents parents){
-		// 		import std.stdio, std.algorithm;
-		// 		foreach (j; value.indexIterator)
-		// 			writefln("%(%s + %) = %s",
-		// 				parents[0].value.indexIterator.filter!(i => i.dropAxes!axes == j).map!(i => parents[0].value[i]),
-		// 				value[j],
-		// 			);
-		// 	}(parents);
-		// }
+		debug (verbose)
+		{
+			(ref Parents parents){
+				import std.algorithm;
+				foreach (j; value.indexIterator)
+					writefln("%s: %(%s + %) = %s",
+						j.indices, parents[0].value.indexIterator.filter!(i => i.dropAxes!axes == j).map!(i => parents[0].value[i]),
+						value[j],
+					);
+			}(parents);
+		}
 	}
 
 	static if (isTrainable!Parent)
@@ -546,17 +556,17 @@ if (isTensor!Parent)
 			v = 1;
 		foreach (i; parents[0].value.indexIterator)
 			value[i.dropAxis!axis] *= parents[0].value[i];
-		// debug
-		// {
-		// 	(ref Parents parents){
-		// 		import std.stdio, std.algorithm;
-		// 		foreach (j; value.indexIterator)
-		// 			writefln("%(%s * %) = %s",
-		// 				parents[0].value.indexIterator.filter!(i => i.dropAxis!axis == j).map!(i => parents[0].value[i]),
-		// 				value[j],
-		// 			);
-		// 	}(parents);
-		// }
+		debug (verbose)
+		{
+			(ref Parents parents){
+				import std.stdio, std.algorithm;
+				foreach (j; value.indexIterator)
+					writefln("%s: %(%s * %) = %s",
+						j.indices, parents[0].value.indexIterator.filter!(i => i.dropAxis!axis == j).map!(i => parents[0].value[i]),
+						value[j],
+					);
+			}(parents);
+		}
 	}
 
 	static if (isTrainable!Parent)
@@ -880,7 +890,13 @@ private void testProblem(Graph, Input, Output, size_t numObservations)(
 
 	foreach (epoch; 0 .. 1000)
 	{
-		debug (verbose) { import std.stdio; writefln("\n=== Epoch %d ===", epoch); }
+		debug (verbose)
+		{
+			writefln("\n=== Epoch %d ===", epoch);
+			foreach (ref tensor; graph.tensors)
+				static if (isOptimizable!(typeof(tensor)))
+					writeln(tensor.name, ": ", tensor.value.valueIterator);
+		}
 		foreach (i; numObservations.iota/*.randomCover*/)
 		{
 			debug (verbose) { import std.stdio; writefln("--- %s -> %s :", inputs[i], labels[i]); }
