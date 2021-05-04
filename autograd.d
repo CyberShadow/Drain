@@ -403,7 +403,7 @@ auto graph(Optimizer, Outputs...)(Optimizer optimizer, Outputs outputs)
 /// Holds some values.
 /// May or may not be trainable, depending on whether `Box` is writable.
 /// Can be used for inputs, weights, biases...
-struct Value(Box, bool _isInput, bool _isTrainable, string _name = null)
+struct Value(Box, bool _isInput, bool _isTrainable, string _name)
 if (isBox!Box)
 {
 	alias Parents = AliasSeq!(); /// No parents.
@@ -437,19 +437,19 @@ if (isBox!Box)
 }
 
 /// A non-trainable non-input value.
-alias Constant      (Box, string name = null) = Value!(Box, false, false, name);
+alias Constant      (Box, string name = "constant") = Value!(Box, false, false, name);
 auto constant      (R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return Constant      !(ElementType!R)(); } /// ditto
 
 /// A trainable non-input value.
-alias Variable      (Box, string name = null) = Value!(Box, false, true , name);
+alias Variable      (Box, string name = "variable") = Value!(Box, false, true , name);
 auto variable      (R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return Variable      !(ElementType!R)(); } /// ditto
 
 /// A non-trainable input value.
-alias Input         (Box, string name = null) = Value!(Box, true , false, name);
+alias Input         (Box, string name = "input") = Value!(Box, true , false, name);
 auto input         (R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return Input         !(ElementType!R)(); } /// ditto
 
 /// A trainable input value.
-alias TrainableInput(Box, string name = null) = Value!(Box, true , true , name);
+alias TrainableInput(Box, string name = "trainableInput") = Value!(Box, true , true , name);
 auto trainableInput(R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return TrainableInput!(ElementType!R)(); } /// ditto
 
 
