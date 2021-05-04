@@ -818,12 +818,15 @@ if (isTensor!Parent)
 // ----------------------------------------------------------------------------
 
 
-auto linearDense(Shape outputShape, Parent)(Parent parent)
+/// Transform values across axes after `firstAxis` according to a
+/// trainable dense linear layer.
+auto linearDense(Shape outputShape, size_t firstAxis = 1, Parent)(Parent parent)
 {
-	// Assume first axis is the batch size
-	enum batchSizeAxis = 0;
-	enum batchSize = Parent.value.shape.dims[batchSizeAxis];
-	enum inputShape = Parent.value.shape.dropAxis(batchSizeAxis);
+	// Divide input dimensions according to those which will be
+	// preserved (e.g. the batch size) and those that will be
+	// transformed.  By default, assume first axis is the batch size.
+	enum batchShape = Shape(Parent.value.shape.dims[0 .. firstAxis]);
+	enum inputShape = Shape(Parent.value.shape.dims[firstAxis .. $]);
 
 	auto weights = Variable!(DenseBox!(Parent.value.T, Shape(outputShape.dims ~ inputShape.dims)), Parent.name ~ ".dense-weights")();
 	auto biases  = Variable!(DenseBox!(Parent.value.T, outputShape                              ), Parent.name ~ ".dense-biases" )();
@@ -832,44 +835,44 @@ auto linearDense(Shape outputShape, Parent)(Parent parent)
 			concatenate(
 				weights
 				// outputShape x inputShape
-				.repeat!batchSize // insert batch size axis
-				// batchSize x outputShape x inputShape
+				.repeat!batchShape // insert batch size axis
+				// batchShape x outputShape x inputShape
 				.repeat!1 // first multiplicand
-				// 1 x batchSize x outputShape x inputShape
+				// 1 x batchShape x outputShape x inputShape
 				,
 
 				parent
-				// batchSize x inputShape
-				.repeat!(outputShape, batchSizeAxis + 1)
-				// batchSize x outputShape x inputShape
+				// batchShape x inputShape
+				.repeat!(outputShape, batchShape.dims.length)
+				// batchShape x outputShape x inputShape
 				.repeat!1 // second multiplicand
-				// 1 x batchSize x outputShape x inputShape
+				// 1 x batchShape x outputShape x inputShape
 				,
 			)
-			// 2 x batchSize x outputShape x inputShape
+			// 2 x batchShape x outputShape x inputShape
 			.multiply
-			// batchSize x outputShape x inputShape
+			// batchShape x outputShape x inputShape
 			.add!(iota(1 + outputShape.dims.length, 1 + outputShape.dims.length + inputShape.dims.length).array)
-			// batchSize x outputShape
+			// batchShape x outputShape
 			.repeat!1 // first addend
-			// 1 x batchSize x outputShape
+			// 1 x batchShape x outputShape
 			,
 
 			biases
 			// outputShape
-			.repeat!batchSize // insert batch size axis
-			// batchSize x outputShape
+			.repeat!batchShape // insert batch size axis
+			// batchShape x outputShape
 			.repeat!1 // last addend
-			// 1 x batchSize x outputShape
+			// 1 x batchShape x outputShape
 			,
 		)
-		// 2 x batchSize x outputShape
+		// 2 x batchShape x outputShape
 		.add
-		// batchSize x outputShape
+		// batchShape x outputShape
 	;
 }
 
-auto linearDense(size_t numOutputs, Parent)(Parent parent) { return linearDense!(Shape([numOutputs]))(parent); }
+auto linearDense(size_t numOutputs, size_t firstAxis = 1, Parent)(Parent parent) { return linearDense!(Shape([numOutputs]), firstAxis)(parent); }
 
 
 // ----------------------------------------------------------------------------
