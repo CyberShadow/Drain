@@ -903,7 +903,7 @@ template Unary(alias forwardFunc, alias backwardFunc, string _name)
 		void backward(ref Parents parents)
 		{
 			foreach (i; gradient.indexIterator)
-				parents[0].gradient[i] += backwardFunc(this.value[i], this.gradient[i]);
+				parents[0].gradient[i] += backwardFunc(parents[0].value[i], this.value[i], this.gradient[i]);
 			foreach (ref g; this.gradient.valueIterator)
 				g = 0;
 		}
@@ -926,8 +926,8 @@ template unary(alias forwardFunc, alias backwardFunc, string name)
 
 
 /// Rectified Linear Unit activation.
-T reluForward(T)(T value) { return value < 0 ? 0 : value; }
-T reluBackward(T)(T value, T gradient) { return value < 0 ? 0 : gradient; } /// ditto
+T reluForward(T)(T input) { return input > 0 ? input : 0; }
+T reluBackward(T)(T input, T output, T gradient) { return input > 0 ? gradient : 0; } /// ditto
 
 alias ReLU = Unary!(reluForward, reluBackward, "relu"); /// ditto
 alias relu = unary!(reluForward, reluBackward, "relu"); /// ditto
@@ -935,15 +935,15 @@ alias relu = unary!(reluForward, reluBackward, "relu"); /// ditto
 
 // note: this is the tanh-based sigmoid function, not the one used by Keras
 /// Sigmoid activation.
-T sigmoidForward(T)(T value)
+T sigmoidForward(T)(T input)
 {
 	enum z = T(0.5);
-	return tanh(value * z) * z + z;
+	return tanh(input * z) * z + z;
 }
 
-T sigmoidBackward(T)(T value, T gradient)
+T sigmoidBackward(T)(T input, T output, T gradient)
 {
-	return value * (T(1) - value) * gradient;
+	return output * (T(1) - output) * gradient;
 } /// ditto
 
 alias Sigmoid = Unary!(sigmoidForward, sigmoidBackward, "sigmoid"); /// ditto
