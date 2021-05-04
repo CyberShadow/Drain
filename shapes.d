@@ -12,6 +12,7 @@ import std.range;
 struct Shape
 {
 	/// Size in each dimension.
+	/// Order is outer-to-inner.
 	immutable size_t[] dims = [];
 
 	/// Total number of elements
@@ -96,8 +97,12 @@ private T[n+m] sconcat(T, size_t n, size_t m)(auto ref const T[n] a, auto ref co
 /// a `Shape`-defined hyperrectangle.
 struct Index(Shape _shape)
 {
-	enum shape = _shape; /// Parent `Shape`.
-	size_t[shape.dims.length] indices; /// The indices along each dimension.
+	/// Parent `Shape`.
+	enum shape = _shape;
+
+	/// The indices along each dimension.
+	/// As with `Shape.dims`, order is outer-to-inner.
+	size_t[shape.dims.length] indices;
 	alias indices this;
 
 	/// Concatenate two indices to create an index within the shape
