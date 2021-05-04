@@ -355,20 +355,30 @@ unittest
 // ----------------------------------------------------------------------------
 
 /// Reduce the dimensionality of `box` by folding all elements along
-/// `axis` using the supplied binary predicate, therefore removing it.
-DenseBox!(Box.T, Box.shape.dropAxis(axis)) fold(size_t axis, Box, Pred)(const auto ref Box box, Pred pred)
+/// `axes` using the supplied binary predicate, therefore removing them.
+DenseBox!(Box.T, Box.shape.dropAxes(axes)) fold(size_t[] axes, Box, Pred)(const auto ref Box box, Pred pred)
 if (isBox!Box)
 {
-	DenseBox!(Box.T, Box.shape.dropAxis(axis)) result;
+	DenseBox!(Box.T, Box.shape.dropAxes(axes)) result;
 	foreach (i; box.indexIterator)
 	{
-		if (i.indices[axis] == 0)
-			result[i.dropAxis!axis] = box[i];
+		bool first = true;
+		static foreach (axis; axes)
+			if (i.indices[axis] != 0)
+				first = false;
+		if (first)
+			result[i.dropAxes!axes] = box[i];
 		else
-			result[i.dropAxis!axis] = pred(result[i.dropAxis!axis], box[i]);
+			result[i.dropAxes!axes] = pred(result[i.dropAxes!axes], box[i]);
 	}
 	return result;
 }
+
+DenseBox!(Box.T, Box.shape.dropAxis(axis)) fold(size_t axis, Box, Pred)(const auto ref Box box, Pred pred)
+if (isBox!Box)
+{
+	return fold!([axis])(box, pred);
+} /// ditto
 
 /// Construct a predicate from a binary function.
 // TODO move this somewhere proper.
