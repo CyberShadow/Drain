@@ -44,6 +44,13 @@ struct Shape
 		}
 	}
 
+	/// Return a `Shape` with the given shape's axes added at the
+	/// given position.
+	Shape addAxes(Shape shape, size_t where)
+	{
+		return Shape(dims[0 .. where] ~ shape.dims ~ dims[where .. $]);
+	}
+
 	/// Return a `Shape` with the given axes swapped.
 	Shape swapAxes(size_t axis1, size_t axis2)
 	{
@@ -119,6 +126,21 @@ struct Index(Shape _shape)
 				static assert(axes[$-2] < axes[$-1]);
 			return dropAxis!(axes[$-1]).dropAxes!(axes[0 .. $-1]);
 		}
+	}
+
+	/// Return an `Index` with the given index's axes added at the
+	/// given position.
+	Index!(shape.addAxes(indexShape, where)) addAxes(size_t where, Shape indexShape)(Index!indexShape otherIndex)
+	{
+		return Index!(shape.addAxes(indexShape, where))(
+			sconcat(
+				sconcat(
+					this.indices[0 .. where],
+					otherIndex.indices,
+				),
+				this.indices[where .. $],
+			)
+		);
 	}
 }
 
