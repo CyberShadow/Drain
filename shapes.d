@@ -421,12 +421,12 @@ Variable!T variable(T)(T value) { return Variable!T(value); } /// ditto
 
 // ----------------------------------------------------------------------------
 
-/// Adds a dimension to the front of `Box` with length `n`.
-struct Repeat(Box, size_t n)
+/// Increase the dimensionality of `box` by adding dimensions at the given axis position.
+struct Repeat(Box, Shape addedShape, size_t where = 0)
 if (isBox!Box)
 {
 	alias T = Box.T;
-	enum shape = Shape(n ~ Box.shape.dims);
+	enum shape = Box.shape.addAxes(addedShape, where);
 	Box value;
 
 	auto ref valueIterator() inout
@@ -436,56 +436,48 @@ if (isBox!Box)
 
 	auto indexIterator() const @nogc
 	{
-		version (none) // Not @nogc
+		struct Iterator
 		{
-			import std.algorithm.iteration : map, joiner;
-			return n.iota.map!(i => value.indexIterator.map!(vi => Index!shape(sconcat([i].staticArray, vi.indices)))).joiner;
-		}
-		else
-		{
-			struct Iterator
+			private ShapeIterator!(addedShape) thisIndex;
+			private ShapeIterator!(Box.shape) nextIndex;
+
+			@property Index!shape front()
 			{
-				private size_t i; // this dimension
-				private ShapeIterator!(Box.shape) nextIndex;
-				bool empty;
+				return nextIndex.front.addAxes!where(thisIndex.front);
+			}
 
-				@property Index!shape front()
-				{
-					return Index!shape(sconcat([i].staticArray, nextIndex.front.indices));
-				}
+			@property bool empty() { return thisIndex.empty; }
 
-				void popFront()
+			void popFront()
+			{
+				assert(!empty);
+				nextIndex.popFront();
+				if (nextIndex.empty)
 				{
-					assert(!empty);
-					nextIndex.popFront();
-					if (nextIndex.empty)
-					{
-						nextIndex = typeof(nextIndex).init;
-						i++;
-						empty = i == n;
-					}
+					nextIndex = typeof(nextIndex).init;
+					thisIndex.popFront();
 				}
 			}
-			return Iterator.init;
 		}
+		return Iterator.init;
 	}
 
 	/// Reference a particular element by its `Index`.
 	ref auto opIndex(Index!shape index) inout
 	{
-		return value[Index!(Shape(shape.dims[1 .. $]))(index.indices[1 .. $])];
+		Index!(Box.shape) nextIndex = index.dropAxes!(iota(where, where + addedShape.dims.length).array);
+		return value[nextIndex];
 	}
 }
-Repeat!(Box, n) repeat(size_t n, Box)(auto ref Box box) if (isBox!Box) { return Repeat!(Box, n)(box); } /// ditto
+Repeat!(Box, shape     , where) repeat(Shape shape, size_t where = 0, Box)(auto ref Box box) if (isBox!Box) { return Repeat!(Box, shape     , where)(box); } /// ditto
+Repeat!(Box, Shape([n]), where) repeat(size_t n   , size_t where = 0, Box)(auto ref Box box) if (isBox!Box) { return Repeat!(Box, Shape([n]), where)(box); } /// ditto
 
-auto repeat(Shape shape, Box)(auto ref Box box)
-if (isBox!Box)
+unittest
 {
-	static if (shape.dims.length == 0)
-		return box;
-	else
-		return repeat!(shape.dims[0])(repeat!(Shape(shape.dims[1 .. $]))(box));
-} /// ditto
+	auto b = constant!1.repeat!2;
+	assert(b[Index!(b.shape)([0])] == 1);
+	assert(b[Index!(b.shape)([1])] == 1);
+}
 
 unittest
 {
