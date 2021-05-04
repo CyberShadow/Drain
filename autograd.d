@@ -475,7 +475,7 @@ if (isTensor!Parent)
 		foreach (i; parents[0].gradient.indexIterator)
 		{
 			auto j = i.dropAxis!axis;
-			parents[0].gradient[i] = this.gradient[j];
+			parents[0].gradient[i] += this.gradient[j];
 		}
 		foreach (ref g; this.gradient.valueIterator)
 			g = 0;
@@ -719,7 +719,8 @@ if (isTensor!Parent)
 
 		void backward(ref Parents parents)
 		{
-			parents[0].gradient = this.gradient.value;
+			foreach (i; parents[0].gradient.indexIterator)
+				parents[0].gradient[i] += this.gradient.value[i];
 			foreach (ref g; this.gradient.value.valueIterator)
 				g = 0;
 		}
@@ -757,7 +758,8 @@ if (isTensor!Parent)
 
 		void backward(ref Parents parents)
 		{
-			parents[0].gradient = this.gradient.value;
+			foreach (i; parents[0].gradient.indexIterator)
+				parents[0].gradient[i] += this.gradient[i];
 			foreach (ref g; this.gradient.value.valueIterator)
 				g = 0;
 		}
