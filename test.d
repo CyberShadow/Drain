@@ -17,36 +17,24 @@ private:
 struct Variable(T)
 {
 	T value;
-	T gradientAccumulator = 0, gradientTotal = 0;
+	T gradient = 0;
 	// Optimizer parameters here?
 
-	void accumulateGradient(T value, T weight = 1)
+	void accumulateGradient(T value)
 	{
-		gradientAccumulator += value;
-		gradientTotal += weight;
-	}
-
-	@property float gradient() const
-	{
-		if (gradientAccumulator == 0 || gradientTotal == 0)
-			return 0;
-		T result = gradientAccumulator / gradientTotal;
-		if (result != result)
-			result = 0;
-		return result;
+		gradient += value;
 	}
 
 	// Used to start backpropagation.
 	void setGradient(T label, T learningRate)
 	{
-		gradientAccumulator = (label - value) * learningRate;
-		gradientTotal = 1;
+		gradient = (label - value) * learningRate;
 	}
 
 	void applyGradient()
 	{
-		value += gradient();
-		gradientAccumulator = gradientTotal = 0;
+		value += gradient;
+		gradient = 0;
 	}
 }
 Variable!T variable(T)(T value) { return Variable!T(value); }
@@ -252,7 +240,7 @@ void testProblem(Model, size_t numInputs, size_t numOutputs)(float[numInputs][] 
 		// auto learningRate = (2.0 / numEpochs) * (numEpochs - epoch) / numEpochs;
 		// learningRate *= 100;
 		// auto learningRate = 1f;
-		auto learningRate = (numEpochs - epoch) / float(numEpochs);
+		auto learningRate = (numEpochs - epoch) / float(numEpochs) / 20;
 
 		foreach (s; 0 .. numSamples)
 		{
@@ -260,19 +248,21 @@ void testProblem(Model, size_t numInputs, size_t numOutputs)(float[numInputs][] 
 
 			vars.tupleof[0].valueIterator = inputs[s].amap!variable;
 			static foreach (i; 0 .. Model.tupleof.length)
+			{
 				m.tupleof[i].forward(vars.tupleof[i], vars.tupleof[i + 1]);
+				writef("%(%1.4f\t%|%)", vars.tupleof[i + 1].valueIterator.amap!(v => v.value));
+			}
 
-			// writef("%1.4f\t", hidden[0].value);
 			foreach (o; vars.tupleof[$-1].indexIterator)
 				vars.tupleof[$-1][o].setGradient(labels[s][o[0]], learningRate);
 
 			static foreach_reverse (i; 0 .. Model.tupleof.length)
 				m.tupleof[i].backward(vars.tupleof[i], vars.tupleof[i + 1]);
-		}
-		// writefln("\t%s\t%s", m.d.weights, m.d.biases);
-
 		foreach (ref layer; m.tupleof)
 			layer.applyGradients();
+		}
+		writefln("\t%s\t%s", m.tupleof[0].weights, m.tupleof[0].biases);
+
 	}
 
 	debug (verbose)
@@ -311,8 +301,9 @@ unittest
 	float[1][numSamples] labels;
 	foreach (i; 0 .. numSamples)
 	{
-		inputs[i] = [uniform01!float];
-		labels[i] = [inputs[i][0] * 3f + 4f];
+		enum scale = 1f;
+		inputs[i] = [uniform01!float * scale];
+		labels[i] = [inputs[i][0] * 3f * scale + 4f * scale];
 	}
 
 	struct Model
