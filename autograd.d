@@ -805,34 +805,58 @@ if (isTensor!Parent)
 // ----------------------------------------------------------------------------
 
 
-auto linearDense(size_t numOutputs, Parent)(Parent parent)
+auto linearDense(Shape outputShape, Parent)(Parent parent)
 {
 	// Assume first axis is the batch size
-	enum batchSize = Parent.value.shape.dims[0];
-	enum inputShape = Parent.value.shape.dropAxis(0);
+	enum batchSizeAxis = 0;
+	enum batchSize = Parent.value.shape.dims[batchSizeAxis];
+	enum inputShape = Parent.value.shape.dropAxis(batchSizeAxis);
 
-	auto weights = Variable!(DenseBox!(Parent.value.T, Shape(numOutputs ~ inputShape.dims)))();
-	auto biases  = Variable!(DenseBox!(Parent.value.T, inputShape))();
+	auto weights = Variable!(DenseBox!(Parent.value.T, Shape(outputShape.dims ~ inputShape.dims)), Parent.name ~ ".dense-weights")();
+	auto biases  = Variable!(DenseBox!(Parent.value.T, outputShape                              ), Parent.name ~ ".dense-biases" )();
 	return
 		concatenate(
 			concatenate(
 				weights
-				.repeat!batchSize
-				.swapAxes!(0, 1)
-				.repeat!1
+				// outputShape x inputShape
+				.repeat!batchSize // insert batch size axis
+				// batchSize x outputShape x inputShape
+				.repeat!1 // first multiplicand
+				// 1 x batchSize x outputShape x inputShape
 				,
+
 				parent
-				.repeat!numOutputs
-				.repeat!1
+				// batchSize x inputShape
+				.repeat!(outputShape, batchSizeAxis + 1)
+				// batchSize x outputShape x inputShape
+				.repeat!1 // second multiplicand
+				// 1 x batchSize x outputShape x inputShape
 				,
 			)
-			.multiply,
+			// 2 x batchSize x outputShape x inputShape
+			.multiply
+			// batchSize x outputShape x inputShape
+			.add!(iota(1 + outputShape.dims.length, 1 + outputShape.dims.length + inputShape.dims.length).array)
+			// batchSize x outputShape
+			.repeat!1 // first addend
+			// 1 x batchSize x outputShape
+			,
+
 			biases
-			.repeat!batchSize
-			.repeat!1,
+			// outputShape
+			.repeat!batchSize // insert batch size axis
+			// batchSize x outputShape
+			.repeat!1 // last addend
+			// 1 x batchSize x outputShape
+			,
 		)
-		.add;
+		// 2 x batchSize x outputShape
+		.add
+		// batchSize x outputShape
+	;
 }
+
+auto linearDense(size_t numOutputs, Parent)(Parent parent) { return linearDense!(Shape([numOutputs]))(parent); }
 
 unittest
 {
@@ -844,7 +868,7 @@ unittest
 	auto graph = graph(ADAM!()(),
 		inputData[].boxes
 		.input
-		.linearDense!1
+		.linearDense!(Shape([]))
 	);
 
 	foreach (ref tensor; graph.tensors)
