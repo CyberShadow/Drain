@@ -1,5 +1,6 @@
 @nogc:
 
+import std.algorithm.mutation : swap;
 import std.array : staticArray;
 import std.math;
 import std.meta;
@@ -986,7 +987,7 @@ private void testProblem(Graph, Input, Output, size_t numObservations)(
 		auto output = graph.tensors[$-1].value.valueIterator.front;
 		auto label = labels[i].box.valueIterator.front;
 		debug (verbose) { import std.stdio; writefln("%s -> %s / %s", inputs[i], output, label); }
-		assert(isClose(output, label));
+		assert(round(output) == round(label));
 	}
 }
 
@@ -1047,6 +1048,59 @@ unittest
 	auto graph = graph(ADAM!()(),
 		inputs[].boxes
 		.input
+		.linearDense!1
+	);
+	testProblem(graph, inputs, labels);
+}
+
+/// Sigmoid test (comparison of two numbers)
+unittest
+{
+	rndGen.seed(1);
+
+	enum numSamples = 16;
+
+	float[2][numSamples][1] inputs;
+	float[1][numSamples][1] labels;
+	foreach (i; 0 .. numSamples)
+	{
+		inputs[0][i] = [uniform01!float, uniform01!float];
+		if ((inputs[0][i][0] < inputs[0][i][1]) != (i % 2))
+			swap(inputs[0][i][0], inputs[0][i][1]);
+		labels[0][i][0] = i % 2;
+	}
+
+	auto graph = graph(ADAM!()(),
+		inputs[].boxes
+		.input
+		.linearDense!1
+		.sigmoid
+	);
+	testProblem(graph, inputs, labels);
+}
+
+/// XOR problem
+unittest
+{
+	// We're using few units and non-leaky
+	// ReLUs, so the seed is important
+	rndGen.seed(5);
+
+	enum numSamples = 4;
+
+	float[2][1][numSamples] inputs;
+	float[1][1][numSamples] labels;
+	foreach (i; 0 .. numSamples)
+	{
+		inputs[i][0] = [i % 2, i / 2 % 2];
+		labels[i][0] = [inputs[i][0][0] != inputs[i][0][1]];
+	}
+
+	auto graph = graph(ADAM!(Constant!(float, 0.01f))(),
+		inputs[].boxes
+		.input
+		.linearDense!8
+		.relu
 		.linearDense!1
 	);
 	testProblem(graph, inputs, labels);
