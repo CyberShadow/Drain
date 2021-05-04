@@ -28,6 +28,12 @@ enum isTensor(Tensor) = true
 	/// This tensor's parents. Cycles are not allowed (nor are possible), but forks/merges are.
 	&& __traits(hasMember, Tensor, q{Parents})
 
+	/// Tensors should have a unique name.
+	/// Because tensors are identified by their type,
+	/// the name is an additional disambiguation
+	/// mechanism when the type otherwise coincides.
+	&& __traits(hasMember, Tensor, q{name})
+
 	/// Function which populates `value`.
 	&& __traits(hasMember, Tensor, q{forward})
 
@@ -387,10 +393,11 @@ auto graph(Optimizer, Outputs...)(Optimizer optimizer, Outputs outputs)
 /// Holds some values.
 /// May or may not be trainable, depending on whether `Box` is writable.
 /// Can be used for inputs, weights, biases...
-struct Value(Box, bool _isInput, bool _isTrainable)
+struct Value(Box, bool _isInput, bool _isTrainable, string _name = null)
 if (isBox!Box)
 {
 	alias Parents = AliasSeq!(); /// No parents.
+	enum name = _name;
 
 	Box value; /// Value is fed in by graph methods.
 
@@ -420,19 +427,19 @@ if (isBox!Box)
 }
 
 /// A non-trainable non-input value.
-alias Constant      (Box) = Value!(Box, false, false);
+alias Constant      (Box, string name = null) = Value!(Box, false, false, name);
 auto constant      (R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return Constant      !(ElementType!R)(); } /// ditto
 
 /// A trainable non-input value.
-alias Variable      (Box) = Value!(Box, false, true );
+alias Variable      (Box, string name = null) = Value!(Box, false, true , name);
 auto variable      (R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return Variable      !(ElementType!R)(); } /// ditto
 
 /// A non-trainable input value.
-alias Input         (Box) = Value!(Box, true , false); 
+alias Input         (Box, string name = null) = Value!(Box, true , false, name);
 auto input         (R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return Input         !(ElementType!R)(); } /// ditto
 
 /// A trainable input value.
-alias TrainableInput(Box) = Value!(Box, true , true ); 
+alias TrainableInput(Box, string name = null) = Value!(Box, true , true , name);
 auto trainableInput(R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return TrainableInput!(ElementType!R)(); } /// ditto
 
 
@@ -445,6 +452,7 @@ if (isTensor!Parent)
 {
 	alias Parents = AliasSeq!Parent;
 	alias T = typeof(Parent.value).T;
+	enum name = Parent.name ~ ".add";
 
 	DenseBox!(T, Parent.value.shape.dropAxes(axes)) value;
 	static if (isTrainable!Parent)
@@ -526,6 +534,7 @@ if (isTensor!Parent)
 {
 	alias Parents = AliasSeq!Parent;
 	alias T = typeof(Parent.value).T;
+	enum name = Parent.name ~ ".multiply";
 
 	DenseBox!(T, Parent.value.shape.dropAxis(axis)) value;
 	static if (isTrainable!Parent)
@@ -614,6 +623,9 @@ if (allSatisfy!(isTensor, _Parents))
 
 	private alias TensorType(Tensor) = typeof(Tensor.value).T;
 	alias T = CommonType!(staticMap!(TensorType, Parents));
+
+	private alias tensorName(Tensor) = Tensor.name;
+	enum name = "[" ~ [staticMap!(tensorName, Parents)].join(", ") ~ "].concatenate";
 
 	private enum tensorShape(Tensor) = Tensor.value.shape;
 	private enum outputShape = Shape.concatenate(axis, staticMap!(tensorShape, Parents));
@@ -711,6 +723,7 @@ struct Repeat(Parent, Shape shape, size_t where)
 if (isTensor!Parent)
 {
 	alias Parents = AliasSeq!Parent;
+	enum name = Parent.name ~ ".repeat";
 
 	typeof(shapes.repeat!(shape, where)(Parent.value)) value;
 
@@ -756,6 +769,7 @@ struct SwapAxes(Parent, size_t axis1, size_t axis2)
 if (isTensor!Parent)
 {
 	alias Parents = AliasSeq!Parent;
+	enum name = Parent.name ~ ".swapAxes";
 
 	shapes.SwapAxes!(typeof(Parent.value), axis1, axis2) value;
 
