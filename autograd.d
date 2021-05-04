@@ -440,13 +440,13 @@ auto trainableInput(R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { re
 
 
 /// Adds values in a box along an axis.
-struct Add(Parent, size_t axis)
+struct Add(Parent, size_t[] axes)
 if (isTensor!Parent)
 {
 	alias Parents = AliasSeq!Parent;
 	alias T = typeof(Parent.value).T;
 
-	DenseBox!(T, Parent.value.shape.dropAxis(axis)) value;
+	DenseBox!(T, Parent.value.shape.dropAxes(axes)) value;
 	static if (isTrainable!Parent)
 		typeof(value) gradient;
 
@@ -455,14 +455,14 @@ if (isTensor!Parent)
 		foreach (ref v; value.valueIterator)
 			v = 0;
 		foreach (i; parents[0].value.indexIterator)
-			value[i.dropAxis!axis] += parents[0].value[i];
+			value[i.dropAxes!axes] += parents[0].value[i];
 		// debug
 		// {
 		// 	(ref Parents parents){
 		// 		import std.stdio, std.algorithm;
 		// 		foreach (j; value.indexIterator)
 		// 			writefln("%(%s + %) = %s",
-		// 				parents[0].value.indexIterator.filter!(i => i.dropAxis!axis == j).map!(i => parents[0].value[i]),
+		// 				parents[0].value.indexIterator.filter!(i => i.dropAxes!axes == j).map!(i => parents[0].value[i]),
 		// 				value[j],
 		// 			);
 		// 	}(parents);
@@ -474,7 +474,7 @@ if (isTensor!Parent)
 	{
 		foreach (i; parents[0].gradient.indexIterator)
 		{
-			auto j = i.dropAxis!axis;
+			auto j = i.dropAxes!axes;
 			parents[0].gradient[i] += this.gradient[j];
 		}
 		foreach (ref g; this.gradient.valueIterator)
@@ -484,10 +484,16 @@ if (isTensor!Parent)
 	static assert(isTensor!(typeof(this)));
 }
 
-Add!(Parent, axis) add(size_t axis = 0, Parent)(Parent parent)
+Add!(Parent, axes) add(size_t[] axes = [0], Parent)(Parent parent)
 if (isTensor!Parent)
 {
-	return Add!(Parent, axis)();
+	return Add!(Parent, axes)();
+} /// ditto
+
+Add!(Parent, [axis]) add(size_t axis, Parent)(Parent parent)
+if (isTensor!Parent)
+{
+	return Add!(Parent, [axis])();
 } /// ditto
 
 unittest
