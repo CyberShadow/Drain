@@ -872,7 +872,82 @@ auto linearDense(size_t numOutputs, Parent)(Parent parent) { return linearDense!
 // ----------------------------------------------------------------------------
 
 
-// debug=verbose;
+/// Layer template for a unary function.
+template Unary(alias forwardFunc, alias backwardFunc, string _name)
+{
+	struct Unary(Parent)
+	if (isTensor!Parent)
+	{
+		alias Parents = AliasSeq!Parent;
+		alias T = typeof(Parent.value).T;
+		enum name = Parent.name ~ "." ~ _name;
+
+		typeof(Parent.value) value;
+		static if (isTrainable!Parent)
+			typeof(value) gradient;
+
+		void forward(ref Parents parents)
+		{
+			foreach (i; parents[0].value.indexIterator)
+			{
+				value[i] = forwardFunc(parents[0].value[i]);
+				debug (verbose)
+					writefln("%s: %s(%s) = %s", i, _name, parents[0].value[i], value[i]);
+			}
+		}
+
+		static if (isTrainable!Parent)
+		void backward(ref Parents parents)
+		{
+			foreach (i; gradient.indexIterator)
+				parents[0].gradient[i] += backwardFunc(this.value[i], this.gradient[i]);
+			foreach (ref g; this.gradient.valueIterator)
+				g = 0;
+		}
+
+		static assert(isTensor!(typeof(this)));
+	}
+}
+
+/// ditto
+template unary(alias forwardFunc, alias backwardFunc, string name)
+{
+	alias Inst = Unary!(forwardFunc, backwardFunc, name);
+
+	Inst!(Parent) unary(Parent)(Parent parent)
+	if (isTensor!Parent)
+	{
+		return Inst!(Parent)();
+	} /// ditto
+}
+
+
+/// Rectified Linear Unit activation.
+T reluForward(T)(T value) { return value < 0 ? 0 : value; }
+T reluBackward(T)(T value, T gradient) { return value < 0 ? 0 : gradient; } /// ditto
+
+alias ReLU = Unary!(reluForward, reluBackward, "relu"); /// ditto
+alias relu = unary!(reluForward, reluBackward, "relu"); /// ditto
+
+
+// note: this is the tanh-based sigmoid function, not the one used by Keras
+/// Sigmoid activation.
+T sigmoidForward(T)(T value)
+{
+	enum z = T(0.5);
+	return tanh(value * z) * z + z;
+}
+
+T sigmoidBackward(T)(T value, T gradient)
+{
+	return value * (T(1) - value) * gradient;
+} /// ditto
+
+alias Sigmoid = Unary!(sigmoidForward, sigmoidBackward, "sigmoid"); /// ditto
+alias sigmoid = unary!(sigmoidForward, sigmoidBackward, "sigmoid"); /// ditto
+
+
+// ----------------------------------------------------------------------------
 
 
 version (unittest)
