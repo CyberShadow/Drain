@@ -731,6 +731,52 @@ unittest
 // ----------------------------------------------------------------------------
 
 
+/// Reduce the dimensionality of a tensor by taking just one row/column from a given axis.
+struct SliceOne(size_t axis, size_t index, Parent)
+if (isTensor!Parent)
+{
+	alias Parents = AliasSeq!Parent;
+	enum name = Parent.name ~ ".sliceOne";
+
+	private enum outputShape = Parent.value.shape.dropAxis(axis);
+
+	DenseBox!(Parent.value.T, outputShape) value;
+	static if (anySatisfy!(isTrainable, Parents))
+		typeof(value) gradient;
+
+	void forward(ref Parents parents)
+	{
+		foreach (i; parents[0].value.indexIterator)
+			if (i.indices[axis] == index)
+				value[i.dropAxis!axis] = parents[0].value[i];
+	}
+
+	static if (isTrainable!Parent)
+	void backward(ref Parents parents)
+	{
+		foreach (i; parents[0].gradient.indexIterator)
+			if (i.indices[axis] == index)
+			{
+				auto j = i.dropAxis!axis;
+				parents[0].gradient[i] += this.gradient[j];
+				this.gradient[j] = 0;
+			}
+	}
+
+	static assert(isTensor!(typeof(this)));
+	static assert(isTrainable!(typeof(this)) == isTrainable!Parents);
+}
+
+SliceOne!(axis, index, Parent) sliceOne(size_t axis, size_t index, Parent)(Parent parent)
+if (isTensor!Parent)
+{
+	return SliceOne!(axis, index, Parent)();
+} /// ditto
+
+
+// ----------------------------------------------------------------------------
+
+
 /// Adds dimensions to the front of `Parent` with the given shape.
 struct Repeat(Parent, Shape shape, size_t where)
 if (isTensor!Parent)
