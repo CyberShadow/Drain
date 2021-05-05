@@ -13,7 +13,10 @@ import std.traits;
 debug import std.format;
 
 import shapes;
-private import shapes : constant, Constant, repeat, Repeat, swapAxes, SwapAxes; // Introduce overloads
+
+// Introduce overloads
+private import shapes : constant, Constant, repeat, Repeat, swapAxes, SwapAxes;
+private import std.math : exp;
 
 // debug = verbose;
 debug (verbose) import std.stdio;
@@ -1028,7 +1031,7 @@ private void testProblem(Graph, Input, Output, size_t numObservations)(
 		foreach (ref v; tensor.value.valueIterator)
 			v = uniform01!float;
 
-	foreach (epoch; 0 .. 1000)
+	foreach (epoch; 0 .. 1024 * 4 / numObservations)
 	{
 		debug (verbose)
 		{
@@ -1166,6 +1169,261 @@ unittest
 		.linearDense!4
 		.relu
 		.linearDense!1
+	);
+	testProblem(graph, inputs, labels);
+}
+
+
+// ----------------------------------------------------------------------------
+
+
+/// Layer which calculates the softmax weighted average from the input.
+/// Params:
+///  aggregationAxis = Indicates the axis index along which the sum will be calculated.
+///  roleAxis        = Indicates the axis which distinguishes the value and the weight.
+///                    Its length should be 2.
+struct SoftmaxWeightedAverage(Parent, size_t aggregationAxis = 1, size_t roleAxis = 2)
+if (isTensor!Parent)
+{
+	alias Parents = AliasSeq!Parent;
+	enum name = Parent.name ~ ".softmaxWeightedAverage";
+
+	private enum Role : size_t
+	{
+		value = 0,
+		weight = 1,
+	}
+	enum numRoles = /*enumLength!Role*/ 2;
+
+	static assert(aggregationAxis < roleAxis);
+	static assert(Parent.value.shape.dims[roleAxis] == numRoles);
+	private enum axes = [aggregationAxis, roleAxis];
+	enum Shape shape = Parent.value.shape.dropAxes(axes);
+	DenseBox!(Parent.value.T, shape) value;
+
+	void forward(ref Parents parents)
+	{
+		DenseBox!(Parent.value.T, Parent.value.shape.dropAxis(roleAxis)) weightsExp;
+		foreach (i; parents[0].value.indexIterator)
+		{
+			auto role = i.indices[roleAxis];
+			if (role != Role.weight)
+				continue;
+			auto j = i.dropAxis!roleAxis;
+			weightsExp[j] = exp(parents[0].value[i]);
+		}
+
+		DenseBox!(Parent.value.T, shape) weightsExpSum = weightsExp.fold!aggregationAxis(sum);
+
+		foreach (ref v; value.valueIterator)
+			v = 0;
+		foreach (i; parents[0].value.indexIterator)
+		{
+			auto role = i.indices[roleAxis];
+			if (role != Role.weight)
+				continue;
+
+			auto iValue = i; iValue.indices[roleAxis] = Role.value;
+
+			auto weight = parents[0].value[i];
+			auto value = parents[0].value[iValue];
+
+			auto j = i.dropAxis!roleAxis;
+			auto weightExp = weightsExp[j];
+
+			auto k = j.dropAxis!aggregationAxis;
+			auto weightExpSum = weightsExpSum[k] + this.value.T.epsilon;
+			this.value[k] += value * (weightExp / weightExpSum);
+		}
+	}
+
+	static if (isTrainable!Parent)
+	{
+		typeof(value) gradient;
+
+		void backward(ref Parents parents)
+		{
+			DenseBox!(Parent.value.T, Parent.value.shape.dropAxis(roleAxis)) weightsExp;
+			foreach (i; parents[0].value.indexIterator)
+			{
+				auto role = i.indices[roleAxis];
+				if (role != Role.weight)
+					continue;
+				auto j = i.dropAxis!roleAxis;
+				weightsExp[j] = exp(parents[0].value[i]);
+			}
+
+			DenseBox!(Parent.value.T, shape) weightsExpSum = weightsExp.fold!aggregationAxis(sum);
+
+			// Calculate `exp(weight) * value` (intermediate result)
+			DenseBox!(Parent.value.T, Parent.value.shape.dropAxis(roleAxis)) weightsExpValuesProd;
+			foreach (i; parents[0].value.indexIterator)
+			{
+				auto role = i.indices[roleAxis];
+				if (role != Role.weight)
+					continue;
+				auto iWeight = i;
+				auto iValue = i; iValue.indices[roleAxis] = Role.value;
+				auto j = i.dropAxis!roleAxis;
+				weightsExpValuesProd[j] = parents[0].value[iValue] * weightsExp[j];
+			}
+
+			foreach (i; parents[0].value.indexIterator)
+			{
+				auto j = i.dropAxis!roleAxis;
+				auto k = j.dropAxis!aggregationAxis;
+
+				auto role = i.indices[roleAxis];
+				final switch (role)
+				{
+					case Role.value:
+						parents[0].gradient[i] += gradient[k] * weightsExp[j] / (weightsExpSum[k] + value.T.epsilon);
+						break;
+
+					case Role.weight:
+					{
+						auto iValue = i; iValue.indices[roleAxis] = Role.value;
+						auto value = parents[0].value[iValue];
+
+						auto g = - (weightsExpSum[k] - weightsExp[j]) * value;
+						g += weightsExpValuesProd[j] - (value * weightsExp[j]);
+						g /= weightsExpSum[k] ^^ 2;
+						g *= weightsExp[j];
+						g = -g;
+						g *= gradient[k];
+						if (g != g) // nan
+							g = 0;
+
+						parents[0].gradient[i] += g;
+
+						break;
+					}
+				}
+			}
+
+			foreach (ref g; this.gradient.valueIterator)
+				g = 0;
+		}
+	}
+
+	static assert(isTensor!(typeof(this)));
+	static assert(isTrainable!(typeof(this)) == isTrainable!Parent);
+}
+
+SoftmaxWeightedAverage!(Parent, aggregationAxis, roleAxis) softmaxWeightedAverage(size_t aggregationAxis = 1, size_t roleAxis = 2, Parent)(Parent parent)
+{
+	return SoftmaxWeightedAverage!(Parent, aggregationAxis, roleAxis)();
+}/// ditto
+
+
+// /// Calculate the softmax weighted average from the input.
+// /// Params:
+// ///  aggregationAxis = Indicates the axis index along which the sum will be calculated.
+// ///  roleAxis        = Indicates the axis which distinguishes the value and the weight.
+// ///                    Its length should be 2.
+// auto softmaxWeightedAverage(size_t aggregationAxis = 1, size_t roleAxis = 2, Parent)(Parent parent)
+// {
+// 	enum Role : size_t
+// 	{
+// 		value = 0,
+// 		weight = 1,
+// 	}
+
+// 	static assert(aggregationAxis < roleAxis);
+// 	static assert(Parent.value.shape.dims[roleAxis] == 2);
+// 	enum axes = [aggregationAxis, roleAxis];
+// 	enum Shape shape = Parent.value.shape.dropAxes(axes);
+
+// 	auto values  = parent.sliceOne!(roleAxis, Role.value );
+// 	auto weights = parent.sliceOne!(roleAxis, Role.weight);
+// 	auto weightsExp = weights.exp;
+
+// 	enum inputSize = Parent.value.shape.dims[aggregationAxis];
+
+// 	return
+// 		concatenate(
+// 			values
+// 			// batch x aggregation x datum
+// 			.repeat!1
+// 			// 1 x batch x aggregation x datum
+// 			,
+
+// 			weightsExp
+// 			// batch x aggregation x datum
+// 			.repeat!1
+// 			// 1 x batch x aggregation x datum
+// 			,
+
+// 			weightsExp
+// 			// batch x aggregation x datum
+// 			.add!aggregationAxis
+// 			// batch x datum
+// 			.reciprocal
+// 			// batch x datum
+// 			.repeat!(inputSize, aggregationAxis)
+// 			// batch x aggregation x datum
+// 			.repeat!1
+// 			// 1 x batch x aggregation x datum
+// 			,
+// 		)
+// 		// 3 x batch x aggregation x datum
+// 		.multiply
+// 		// batch x aggregation x datum
+// 		.add!aggregationAxis
+// 		// batch x datum
+// 	;
+// }
+
+unittest
+{
+	rndGen.seed(1);
+
+	enum numFeatures   = 3; // Presence (0 or 1), prediction (0 or 1), and confidence [0,1]
+	enum numTimesteps = 64; // N of observations, max number of items in the set
+	enum numSamples =  512; // Training data size
+
+	float[numFeatures][numTimesteps][numSamples] inputs;
+	float                           [numSamples] labels;
+	foreach (i; 0 .. numSamples)
+	{
+		auto result = uniform!ubyte() % 2;
+
+		// auto numPopulatedTimesteps = uniform(numTimesteps / 2, numTimesteps);
+		auto numPopulatedTimesteps = uniform!uint % (numTimesteps / 2) + (numTimesteps / 2);
+
+		foreach (j; 0 .. numTimesteps)
+		{
+			float presence, prediction, confidence;
+			if (j < numPopulatedTimesteps)
+			{
+				presence = 1;
+				confidence = uniform01!float;
+
+				if (uniform01!float < confidence)
+					prediction = result; // Truth
+				else
+					prediction = 1 - result;
+			}
+			else
+			{
+				presence = 0;
+				prediction = 0;
+				confidence = 0;
+			}
+
+			inputs[i][j] = [presence, prediction, confidence];
+		}
+		labels[i] = result;
+	}
+
+	auto graph = graph(ADAM!()(),
+		inputs[].boxes
+		.input
+		// timesteps x features
+		.linearDense!(2, 1)
+		// timesteps x (value, weight)
+		.softmaxWeightedAverage!(0, 1)
+		.sigmoid
 	);
 	testProblem(graph, inputs, labels);
 }
