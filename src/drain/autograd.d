@@ -999,6 +999,19 @@ alias Sigmoid = Unary!(sigmoidForward, sigmoidBackward, "sigmoid"); /// ditto
 alias sigmoid = unary!(sigmoidForward, sigmoidBackward, "sigmoid"); /// ditto
 
 
+/// Exponentiation function.
+T expBackward(T)(T input, T output, T gradient) { return output * gradient; }
+alias Exp = Unary!(std.math.exp, expBackward, "exp"); /// ditto
+alias exp = unary!(std.math.exp, expBackward, "exp"); /// ditto
+
+
+/// Reciprocal (1/x).
+T reciprocalForward(T)(T input) { return T(1) / input; }
+T reciprocalBackward(T)(T input, T output, T gradient) { return gradient * -(T(1) / (input * input)); } /// ditto
+alias Reciprocal = Unary!(reciprocalForward, reciprocalBackward, "reciprocal"); /// ditto
+alias reciprocal = unary!(reciprocalForward, reciprocalBackward, "reciprocal"); /// ditto
+
+
 // ----------------------------------------------------------------------------
 
 
