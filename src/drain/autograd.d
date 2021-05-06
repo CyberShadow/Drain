@@ -1254,6 +1254,7 @@ if (isTensor!Parent)
 				auto j = i.dropAxis!roleAxis;
 				weightsValuesProd[j] = parents[0].value[iValue] * weights[j];
 			}
+			DenseBox!(Parent.value.T, shape) weightsValuesProdSum = weightsValuesProd.fold!aggregationAxis(sum);
 
 			foreach (i; parents[0].value.indexIterator)
 			{
@@ -1273,7 +1274,7 @@ if (isTensor!Parent)
 						auto value = parents[0].value[iValue];
 
 						auto g = - (weightsSum[k] - weights[j]) * value;
-						g += weightsValuesProd[j] - (value * weights[j]);
+						g += weightsValuesProdSum[k] - (value * weights[j]);
 						g /= weightsSum[k] ^^ 2;
 						g = -g;
 						g *= gradient[k];
