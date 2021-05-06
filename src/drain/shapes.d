@@ -412,6 +412,37 @@ unittest
 
 // ----------------------------------------------------------------------------
 
+/// Wrap a pointer to `Box` into a box.
+struct ByRef(Box)
+if (isBox!Box)
+{
+	Box* value;
+	alias T = Box.T;
+	enum Shape shape = Box.shape;
+
+	ref inout(T) opIndex(Index!shape index) inout return
+	{
+		return (*value)[index];
+	}
+
+	auto ref valueIterator() return inout
+	{
+		return value.valueIterator;
+	}
+
+	auto indexIterator() const { return value.indexIterator; }
+
+	static assert(isBox!(typeof(this)));
+}
+
+auto byRef(Box)(ref Box box)
+{
+	return ByRef!Box(&box);
+} /// ditto
+
+
+// ----------------------------------------------------------------------------
+
 /// Reduce the dimensionality of `box` by taking just one row/column from a given axis.
 /// `AxisValue` is a nullary `size_t` box holding the axis value to slice.
 struct SliceOne(Box, size_t axis, AxisValue)
@@ -486,6 +517,8 @@ unittest
 	float[2][2] a = [[1,2],[3,4]];
 	assert(a.box      .sliceOne!(1, 1).valueIterator.equal([2,4]));
 	assert(a.box      .sliceOne! 1 (1).valueIterator.equal([2,4]));
+	assert(a.box.byRef.sliceOne!(1, 1).valueIterator.equal([2,4]));
+	assert(a.box.byRef.sliceOne! 1 (1).valueIterator.equal([2,4]));
 }
 
 // ----------------------------------------------------------------------------
