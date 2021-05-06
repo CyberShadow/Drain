@@ -1,5 +1,6 @@
 module drain.shapes;
 
+import std.algorithm.comparison;
 import std.algorithm.iteration;
 import std.algorithm.searching : startsWith;
 import std.exception : assumeUnique;
@@ -407,6 +408,84 @@ unittest
 {
 	float[2][2] a = [[1,2],[3,4]];
 	assert(a.box.fold!0(sum).valueIterator == [4,6]);
+}
+
+// ----------------------------------------------------------------------------
+
+/// Reduce the dimensionality of `box` by taking just one row/column from a given axis.
+/// `AxisValue` is a nullary `size_t` box holding the axis value to slice.
+struct SliceOne(Box, size_t axis, AxisValue)
+if (isBox!Box && isBoxOf!(AxisValue, size_t))
+{
+	Box value;
+	alias T = Box.T;
+	AxisValue axisValue;
+	enum Shape shape = Box.shape.dropAxis(axis);
+	private enum Shape slicedShape = Shape([Box.shape.dims[axis]]);
+
+	ref inout(T) opIndex(Index!shape index) inout return
+	{
+		return value[Index!(Box.shape)(index.addAxes!axis(Index!slicedShape([axisValue[nullIndex]])))];
+	}
+
+	auto ref valueIterator() return
+	{
+		return indexIterator.map!(i => this[i]);
+	}
+
+	auto ref valueIterator() return const
+	{
+		return indexIterator.map!(i => this[i]);
+	}
+
+	auto indexIterator() const @nogc
+	{
+		struct Iterator
+		{
+			AxisValue axisValue;
+			private ShapeIterator!(Box.shape) nextIndex;
+
+			@property Index!shape front()
+			{
+				return nextIndex.front.dropAxis!axis();
+			}
+
+			@property bool empty() { return nextIndex.empty; }
+
+			void popFront()
+			{
+				nextIndex.popFront();
+				advance();
+			}
+
+			private void advance()
+			{
+				while (!nextIndex.empty && nextIndex.front.indices[axis] != axisValue[nullIndex])
+					nextIndex.popFront();
+			}
+		}
+		auto i = Iterator(axisValue);
+		i.advance();
+		return i;
+	}
+}
+
+auto sliceOne(size_t axis, size_t axisValue, Box)(Box box)
+{
+	return SliceOne!(Box, axis, typeof(constant!axisValue()))(box);
+} /// ditto
+
+auto sliceOne(size_t axis, Box)(Box box, size_t axisValue)
+{
+	auto v = variable(axisValue);
+	return SliceOne!(Box, axis, typeof(v))(box, v);
+} /// ditto
+
+unittest
+{
+	float[2][2] a = [[1,2],[3,4]];
+	assert(a.box      .sliceOne!(1, 1).valueIterator.equal([2,4]));
+	assert(a.box      .sliceOne! 1 (1).valueIterator.equal([2,4]));
 }
 
 // ----------------------------------------------------------------------------
