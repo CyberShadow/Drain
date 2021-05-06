@@ -901,7 +901,10 @@ auto linearDense(Shape outputShape, size_t firstAxis = 1, Parent)(Parent parent)
 			// 2 x batchShape x outputShape x inputShape
 			.multiply
 			// batchShape x outputShape x inputShape
-			.add!(iota(1 + outputShape.dims.length, 1 + outputShape.dims.length + inputShape.dims.length).array)
+			.add!(iota(
+					batchShape.dims.length + outputShape.dims.length,
+					batchShape.dims.length + outputShape.dims.length + inputShape.dims.length
+				).array)
 			// batchShape x outputShape
 			.repeat!1 // first addend
 			// 1 x batchShape x outputShape
