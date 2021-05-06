@@ -157,6 +157,9 @@ unittest
 	assert(i.dropAxis!1.indices == [1, 3]);
 }
 
+/// The nullary index.
+enum nullIndex = Index!(Shape.init).init;
+
 /// Iterates over all valid indices in `shape`.
 struct ShapeIterator(Shape _shape)
 {
