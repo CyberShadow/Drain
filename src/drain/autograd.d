@@ -15,7 +15,7 @@ debug import std.format;
 import shapes;
 
 // Introduce overloads
-private import shapes : constant, Constant, repeat, Repeat, swapAxes, SwapAxes;
+private import shapes : constant, Constant, repeat, Repeat, swapAxes, SwapAxes, sliceOne;
 private import std.math : exp;
 
 // debug = verbose;
@@ -1172,6 +1172,186 @@ unittest
 		.linearDense!4
 		.relu
 		.linearDense!1
+	);
+	testProblem(graph, inputs, labels);
+}
+
+
+// ----------------------------------------------------------------------------
+
+
+/// Layer which calculates the weighted average from the input.
+/// Params:
+///  aggregationAxis = Indicates the axis index along which the sum will be calculated.
+///  roleAxis        = Indicates the axis which distinguishes the value and the weight.
+///                    Its length should be 2.
+struct WeightedAverage(Parent, size_t aggregationAxis = 1, size_t roleAxis = 2)
+if (isTensor!Parent)
+{
+	alias Parents = AliasSeq!Parent;
+	enum name = Parent.name ~ ".weightedAverage";
+
+	private enum Role : size_t
+	{
+		value = 0,
+		weight = 1,
+	}
+	enum numRoles = /*enumLength!Role*/ 2;
+
+	static assert(aggregationAxis < roleAxis);
+	static assert(Parent.value.shape.dims[roleAxis] == numRoles);
+	private enum axes = [aggregationAxis, roleAxis];
+	enum Shape shape = Parent.value.shape.dropAxes(axes);
+	DenseBox!(Parent.value.T, shape) value;
+
+	void forward(ref Parents parents)
+	{
+	//	auto values  = parents[0].value.byRef.sliceOne!(roleAxis, Role.value);
+		auto weights = parents[0].value.byRef.sliceOne!(roleAxis, Role.weight);
+
+		DenseBox!(Parent.value.T, shape) weightsSum = weights.fold!aggregationAxis(sum);
+
+		foreach (ref v; value.valueIterator)
+			v = 0;
+		foreach (i; parents[0].value.indexIterator)
+		{
+			auto role = i.indices[roleAxis];
+			if (role != Role.weight)
+				continue;
+
+			auto iValue = i; iValue.indices[roleAxis] = Role.value;
+
+			auto weight = parents[0].value[i];
+			auto value = parents[0].value[iValue];
+
+			auto j = i.dropAxis!roleAxis;
+			auto k = j.dropAxis!aggregationAxis;
+			auto weightSum = weightsSum[k] + this.value.T.epsilon;
+			this.value[k] += value * (weight / weightSum);
+		}
+	}
+
+	static if (isTrainable!Parent)
+	{
+		typeof(value) gradient;
+
+		void backward(ref Parents parents)
+		{
+		//	auto values  = parents[0].value.byRef.sliceOne!(roleAxis, Role.value);
+			auto weights = parents[0].value.byRef.sliceOne!(roleAxis, Role.weight);
+
+			DenseBox!(Parent.value.T, shape) weightsSum = weights.fold!aggregationAxis(sum);
+
+			// Calculate `weight * value` (intermediate result)
+			DenseBox!(Parent.value.T, Parent.value.shape.dropAxis(roleAxis)) weightsValuesProd;
+			foreach (i; parents[0].value.indexIterator)
+			{
+				auto role = i.indices[roleAxis];
+				if (role != Role.weight)
+					continue;
+				auto iWeight = i;
+				auto iValue = i; iValue.indices[roleAxis] = Role.value;
+				auto j = i.dropAxis!roleAxis;
+				weightsValuesProd[j] = parents[0].value[iValue] * weights[j];
+			}
+
+			foreach (i; parents[0].value.indexIterator)
+			{
+				auto j = i.dropAxis!roleAxis;
+				auto k = j.dropAxis!aggregationAxis;
+
+				auto role = i.indices[roleAxis];
+				final switch (role)
+				{
+					case Role.value:
+						parents[0].gradient[i] += gradient[k] * weights[j] / (weightsSum[k] + value.T.epsilon);
+						break;
+
+					case Role.weight:
+					{
+						auto iValue = i; iValue.indices[roleAxis] = Role.value;
+						auto value = parents[0].value[iValue];
+
+						auto g = - (weightsSum[k] - weights[j]) * value;
+						g += weightsValuesProd[j] - (value * weights[j]);
+						g /= weightsSum[k] ^^ 2;
+						g = -g;
+						g *= gradient[k];
+						if (g != g) // nan
+							g = 0;
+
+						parents[0].gradient[i] += g;
+
+						break;
+					}
+				}
+			}
+
+			foreach (ref g; this.gradient.valueIterator)
+				g = 0;
+		}
+	}
+
+	static assert(isTensor!(typeof(this)));
+	static assert(isTrainable!(typeof(this)) == isTrainable!Parent);
+}
+
+WeightedAverage!(Parent, aggregationAxis, roleAxis) weightedAverage(size_t aggregationAxis = 1, size_t roleAxis = 2, Parent)(Parent parent)
+{
+	return WeightedAverage!(Parent, aggregationAxis, roleAxis)();
+}/// ditto
+
+
+unittest
+{
+	rndGen.seed(1);
+
+	enum numFeatures  =   3; // Presence (0 or 1), prediction (0 or 1), and confidence [0,1]
+	enum numTimesteps = 128; // N of observations, max number of items in the set
+	enum numSamples   = 256; // Training data size
+
+	float[numFeatures][numTimesteps][numSamples] inputs;
+	float                           [numSamples] labels;
+	foreach (i; 0 .. numSamples)
+	{
+		auto result = uniform!ubyte() % 2;
+
+		// auto numPopulatedTimesteps = uniform(numTimesteps / 2, numTimesteps);
+		auto numPopulatedTimesteps = uniform!uint % (numTimesteps / 2) + (numTimesteps / 2);
+
+		foreach (j; 0 .. numTimesteps)
+		{
+			float presence, prediction, confidence;
+			if (j < numPopulatedTimesteps)
+			{
+				presence = 1;
+				confidence = uniform01!float;
+
+				if (uniform01!float < confidence)
+					prediction = result; // Truth
+				else
+					prediction = 1 - result;
+			}
+			else
+			{
+				presence = 0;
+				prediction = 0;
+				confidence = 0;
+			}
+
+			inputs[i][j] = [presence, prediction, confidence];
+		}
+		labels[i] = result;
+	}
+
+	auto graph = graph(ADAM!()(),
+		inputs[].boxes
+		.input
+		// timesteps x features
+		.linearDense!(2, 1)
+		// timesteps x (value, weight)
+		.sigmoid
+		.weightedAverage!(0, 1)
 	);
 	testProblem(graph, inputs, labels);
 }
