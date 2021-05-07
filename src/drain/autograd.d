@@ -353,6 +353,17 @@ struct Graph(Optimizer, Outputs...)
 		}
 	}
 
+	/// Run backpropagation only (no optimization) for the given tensors only.
+	static if (this.isTrainable)
+	void backwardTensor(Tensors...)()
+	{
+		foreach_reverse (ref tensor; tensorInstances!Tensors)
+		{
+			static assert (.isTrainable!(typeof(tensor)));
+			tensor.backward(tensorInstances!(typeof(tensor).Parents));
+		}
+	}
+
 	// /// Backpropagate the given labels, and then do a forward pass.
 	// /// Assert that the result of the forward pass matches label.
 	// /// Used to test differentiation.
