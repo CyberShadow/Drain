@@ -894,19 +894,19 @@ auto linearDense(Shape outputShape, size_t firstAxis = 1, Parent)(Parent parent)
 	return
 		concatenate(
 			concatenate(
-				weights
-				// outputShape x inputShape
-				.repeat!batchShape // insert batch size axis
-				// batchShape x outputShape x inputShape
-				.repeat!1 // first multiplicand
-				// 1 x batchShape x outputShape x inputShape
-				,
-
 				parent
 				// batchShape x inputShape
 				.repeat!(outputShape, batchShape.dims.length)
 				// batchShape x outputShape x inputShape
 				.repeat!1 // second multiplicand
+				// 1 x batchShape x outputShape x inputShape
+				,
+
+				weights
+				// outputShape x inputShape
+				.repeat!batchShape // insert batch size axis
+				// batchShape x outputShape x inputShape
+				.repeat!1 // first multiplicand
 				// 1 x batchShape x outputShape x inputShape
 				,
 			)
