@@ -155,7 +155,7 @@ struct Index(Shape _shape)
 unittest
 {
 	auto i = Index!(Shape([5, 6, 7]))([1, 2, 3]);
-	assert(i.dropAxis!1.indices == [1, 3]);
+	assert(i.dropAxis!1 == [1, 3]);
 }
 
 /// The nullary index.
@@ -173,8 +173,8 @@ struct ShapeIterator(Shape _shape)
 		static foreach_reverse (dimIndex; 0 .. shape.dims.length)
 		{{
 			enum dimLength = shape.dims[dimIndex];
-			if (++front.indices[dimIndex] == dimLength)
-				front.indices[dimIndex] = 0;
+			if (++front[dimIndex] == dimLength)
+				front[dimIndex] = 0;
 			else
 				return;
 		}}
@@ -293,7 +293,7 @@ struct DenseBox(_T, Shape _shape)
 		static if (shape.dims.length == 0)
 			return value;
 		else
-			return value[index.indices[0]][Index!(Shape(shape.dims[1 .. $]))(index.indices[1 .. $])];
+			return value[index[0]][Index!(Shape(shape.dims[1 .. $]))(index[1 .. $])];
 	}
 
 	// Work-around for https://issues.dlang.org/show_bug.cgi?id=21878
@@ -302,7 +302,7 @@ struct DenseBox(_T, Shape _shape)
 		static if (shape.dims.length == 0)
 			value = newValue;
 		else
-			value[index.indices[0]][Index!(Shape(shape.dims[1 .. $]))(index.indices[1 .. $])] = newValue;
+			value[index[0]][Index!(Shape(shape.dims[1 .. $]))(index[1 .. $])] = newValue;
 	}
 }
 static assert(isBoxOf!(DenseBox!(float, Shape([1])), float));
@@ -370,7 +370,7 @@ if (isBox!Box)
 	{
 		bool first = true;
 		static foreach (axis; axes)
-			if (i.indices[axis] != 0)
+			if (i[axis] != 0)
 				first = false;
 		if (first)
 			result[i.dropAxes!axes] = box[i];
@@ -491,7 +491,7 @@ if (isBox!Box && isBoxOf!(AxisValue, size_t))
 
 			private void advance()
 			{
-				while (!nextIndex.empty && nextIndex.front.indices[axis] != axisValue[nullIndex])
+				while (!nextIndex.empty && nextIndex.front[axis] != axisValue[nullIndex])
 					nextIndex.popFront();
 			}
 		}

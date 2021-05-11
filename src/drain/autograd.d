@@ -498,7 +498,7 @@ if (isTensor!Parent)
 				import std.algorithm;
 				foreach (j; value.indexIterator)
 					writefln("%s: %(%s + %) = %s",
-						j.indices, parents[0].value.indexIterator.filter!(i => i.dropAxes!axes == j).map!(i => parents[0].value[i]),
+						j, parents[0].value.indexIterator.filter!(i => i.dropAxes!axes == j).map!(i => parents[0].value[i]),
 						value[j],
 					);
 			}(parents);
@@ -580,7 +580,7 @@ if (isTensor!Parent)
 				import std.stdio, std.algorithm;
 				foreach (j; value.indexIterator)
 					writefln("%s: %(%s * %) = %s",
-						j.indices, parents[0].value.indexIterator.filter!(i => i.dropAxis!axis == j).map!(i => parents[0].value[i]),
+						j, parents[0].value.indexIterator.filter!(i => i.dropAxis!axis == j).map!(i => parents[0].value[i]),
 						value[j],
 					);
 			}(parents);
@@ -596,10 +596,10 @@ if (isTensor!Parent)
 
 			T otherProduct = 1;
 			foreach (row; 0 .. Parent.value.shape.dims[axis])
-				if (row != i.indices[axis])
+				if (row != i[axis])
 				{
 					auto i2 = i;
-					i2.indices[axis] = row;
+					i2[axis] = row;
 					otherProduct *= parents[0].value[i2];
 				}
 
@@ -669,7 +669,7 @@ if (allSatisfy!(isTensor, _Parents))
 		{
 			foreach (i; parent.value.indexIterator)
 			{
-				auto j = Index!outputShape(i.indices);
+				auto j = Index!outputShape(i);
 				j[axis] += offset;
 				value[j] = parent.value[i];
 			}
@@ -685,7 +685,7 @@ if (allSatisfy!(isTensor, _Parents))
 		{
 			foreach (i; parent.value.indexIterator)
 			{
-				auto j = Index!outputShape(i.indices);
+				auto j = Index!outputShape(i);
 				j[axis] += offset;
 				static if (isTrainable!(typeof(parent)))
 					parent.gradient[i] += gradient[j];
@@ -762,7 +762,7 @@ if (isTensor!Parent)
 	void forward(ref Parents parents)
 	{
 		foreach (i; parents[0].value.indexIterator)
-			if (i.indices[axis] == index)
+			if (i[axis] == index)
 				value[i.dropAxis!axis] = parents[0].value[i];
 	}
 
@@ -770,7 +770,7 @@ if (isTensor!Parent)
 	void backward(ref Parents parents)
 	{
 		foreach (i; parents[0].gradient.indexIterator)
-			if (i.indices[axis] == index)
+			if (i[axis] == index)
 			{
 				auto j = i.dropAxis!axis;
 				parents[0].gradient[i] += this.gradient[j];
@@ -1227,11 +1227,11 @@ if (isTensor!Parent)
 			v = 0;
 		foreach (i; parents[0].value.indexIterator)
 		{
-			auto role = i.indices[roleAxis];
+			auto role = i[roleAxis];
 			if (role != Role.weight)
 				continue;
 
-			auto iValue = i; iValue.indices[roleAxis] = Role.value;
+			auto iValue = i; iValue[roleAxis] = Role.value;
 
 			auto weight = parents[0].value[i];
 			auto value = parents[0].value[iValue];
@@ -1258,11 +1258,11 @@ if (isTensor!Parent)
 			DenseBox!(Parent.value.T, Parent.value.shape.dropAxis(roleAxis)) weightsValuesProd;
 			foreach (i; parents[0].value.indexIterator)
 			{
-				auto role = i.indices[roleAxis];
+				auto role = i[roleAxis];
 				if (role != Role.weight)
 					continue;
 				auto iWeight = i;
-				auto iValue = i; iValue.indices[roleAxis] = Role.value;
+				auto iValue = i; iValue[roleAxis] = Role.value;
 				auto j = i.dropAxis!roleAxis;
 				weightsValuesProd[j] = parents[0].value[iValue] * weights[j];
 			}
@@ -1273,7 +1273,7 @@ if (isTensor!Parent)
 				auto j = i.dropAxis!roleAxis;
 				auto k = j.dropAxis!aggregationAxis;
 
-				auto role = i.indices[roleAxis];
+				auto role = i[roleAxis];
 				final switch (role)
 				{
 					case Role.value:
@@ -1282,7 +1282,7 @@ if (isTensor!Parent)
 
 					case Role.weight:
 					{
-						auto iValue = i; iValue.indices[roleAxis] = Role.value;
+						auto iValue = i; iValue[roleAxis] = Role.value;
 						auto value = parents[0].value[iValue];
 
 						auto g = - (weightsSum[k] - weights[j]) * value;
@@ -1402,7 +1402,7 @@ if (isTensor!Parent)
 		DenseBox!(Parent.value.T, Parent.value.shape.dropAxis(roleAxis)) weightsExp;
 		foreach (i; parents[0].value.indexIterator)
 		{
-			auto role = i.indices[roleAxis];
+			auto role = i[roleAxis];
 			if (role != Role.weight)
 				continue;
 			auto j = i.dropAxis!roleAxis;
@@ -1415,11 +1415,11 @@ if (isTensor!Parent)
 			v = 0;
 		foreach (i; parents[0].value.indexIterator)
 		{
-			auto role = i.indices[roleAxis];
+			auto role = i[roleAxis];
 			if (role != Role.weight)
 				continue;
 
-			auto iValue = i; iValue.indices[roleAxis] = Role.value;
+			auto iValue = i; iValue[roleAxis] = Role.value;
 
 			auto weight = parents[0].value[i];
 			auto value = parents[0].value[iValue];
@@ -1442,7 +1442,7 @@ if (isTensor!Parent)
 			DenseBox!(Parent.value.T, Parent.value.shape.dropAxis(roleAxis)) weightsExp;
 			foreach (i; parents[0].value.indexIterator)
 			{
-				auto role = i.indices[roleAxis];
+				auto role = i[roleAxis];
 				if (role != Role.weight)
 					continue;
 				auto j = i.dropAxis!roleAxis;
@@ -1455,11 +1455,11 @@ if (isTensor!Parent)
 			DenseBox!(Parent.value.T, Parent.value.shape.dropAxis(roleAxis)) weightsExpValuesProd;
 			foreach (i; parents[0].value.indexIterator)
 			{
-				auto role = i.indices[roleAxis];
+				auto role = i[roleAxis];
 				if (role != Role.weight)
 					continue;
 				auto iWeight = i;
-				auto iValue = i; iValue.indices[roleAxis] = Role.value;
+				auto iValue = i; iValue[roleAxis] = Role.value;
 				auto j = i.dropAxis!roleAxis;
 				weightsExpValuesProd[j] = parents[0].value[iValue] * weightsExp[j];
 			}
@@ -1469,7 +1469,7 @@ if (isTensor!Parent)
 				auto j = i.dropAxis!roleAxis;
 				auto k = j.dropAxis!aggregationAxis;
 
-				auto role = i.indices[roleAxis];
+				auto role = i[roleAxis];
 				final switch (role)
 				{
 					case Role.value:
@@ -1478,7 +1478,7 @@ if (isTensor!Parent)
 
 					case Role.weight:
 					{
-						auto iValue = i; iValue.indices[roleAxis] = Role.value;
+						auto iValue = i; iValue[roleAxis] = Role.value;
 						auto value = parents[0].value[iValue];
 
 						auto g = - (weightsExpSum[k] - weightsExp[j]) * value;
