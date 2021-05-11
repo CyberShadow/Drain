@@ -10,6 +10,9 @@ import std.range;
 // Shapes
 // ----------------------------------------------------------------------------
 
+/// Used to indicate the index of some axis (dimension) within a shape/index.
+alias AxisIndex = size_t;
+
 /// Represents the shape of some hyperrectangle
 /// (n-dimensional rectangle).
 struct Shape
@@ -29,14 +32,14 @@ struct Shape
 	}
 
 	/// Return a `Shape` with the given `axis` removed.
-	Shape dropAxis(size_t axis)
+	Shape dropAxis(AxisIndex axis)
 	{
 		return Shape(dims[0 .. axis] ~ dims[axis + 1 .. $]);
 	}
 
 	/// Return a `Shape` with the given `axes` removed.
 	/// `axes` should be in ascending order.
-	Shape dropAxes(scope size_t[] axes)
+	Shape dropAxes(scope AxisIndex[] axes)
 	{
 		if (axes.length == 0)
 			return this;
@@ -50,13 +53,13 @@ struct Shape
 
 	/// Return a `Shape` with the given shape's axes added at the
 	/// given position.
-	Shape addAxes(Shape shape, size_t where)
+	Shape addAxes(Shape shape, AxisIndex where)
 	{
 		return Shape(dims[0 .. where] ~ shape.dims ~ dims[where .. $]);
 	}
 
 	/// Return a `Shape` with the given axes swapped.
-	Shape swapAxes(size_t axis1, size_t axis2)
+	Shape swapAxes(AxisIndex axis1, AxisIndex axis2)
 	{
 		import std.algorithm.mutation : swap;
 		auto dims = this.dims.dup;
@@ -66,7 +69,7 @@ struct Shape
 
 	/// Returns the shape resulting from the concatenation of the
 	/// given shapes along the given axis.
-	static Shape concatenate(size_t axis, Shape[] shapes...)
+	static Shape concatenate(AxisIndex axis, Shape[] shapes...)
 	{
 		assert(shapes.length > 0, "No shapes to concatenate");
 		foreach (shape; shapes)
@@ -74,7 +77,7 @@ struct Shape
 		assert(axis < shapes[0].dims.length, "Concatenation axis is out of bounds");
 		size_t[] result;
 		result.length = shapes[0].dims.length;
-		foreach (i; 0 .. result.length)
+		foreach (AxisIndex i; 0 .. result.length)
 			if (i == axis)
 				result[i] = shapes.map!(shape => shape.dims[axis]).reduce!"a+b";
 			else
@@ -117,14 +120,14 @@ struct Index(Shape _shape)
 	}
 
 	/// Return an `Index` with the given `axis` removed.
-	Index!(shape.dropAxis(axis)) dropAxis(size_t axis)() const
+	Index!(shape.dropAxis(axis)) dropAxis(AxisIndex axis)() const
 	{
 		return Index!(shape.dropAxis(axis))(sconcat(indices[0 .. axis], indices[axis + 1 .. $]));
 	}
 
 	/// Return an `Index` with the given `axes` removed.
 	/// `axes` should be in ascending order.
-	Index!(shape.dropAxes(axes)) dropAxes(size_t[] axes)()
+	Index!(shape.dropAxes(axes)) dropAxes(AxisIndex[] axes)()
 	{
 		static if (axes.length == 0)
 			return this;
@@ -138,7 +141,7 @@ struct Index(Shape _shape)
 
 	/// Return an `Index` with the given index's axes added at the
 	/// given position.
-	Index!(shape.addAxes(indexShape, where)) addAxes(size_t where, Shape indexShape)(Index!indexShape otherIndex)
+	Index!(shape.addAxes(indexShape, where)) addAxes(AxisIndex where, Shape indexShape)(Index!indexShape otherIndex)
 	{
 		return Index!(shape.addAxes(indexShape, where))(
 			sconcat(
@@ -362,7 +365,7 @@ unittest
 
 /// Reduce the dimensionality of `box` by folding all elements along
 /// `axes` using the supplied binary predicate, therefore removing them.
-DenseBox!(Box.T, Box.shape.dropAxes(axes)) fold(size_t[] axes, Box, Pred)(const auto ref Box box, Pred pred)
+DenseBox!(Box.T, Box.shape.dropAxes(axes)) fold(AxisIndex[] axes, Box, Pred)(const auto ref Box box, Pred pred)
 if (isBox!Box)
 {
 	DenseBox!(Box.T, Box.shape.dropAxes(axes)) result;
@@ -380,7 +383,7 @@ if (isBox!Box)
 	return result;
 }
 
-DenseBox!(Box.T, Box.shape.dropAxis(axis)) fold(size_t axis, Box, Pred)(const auto ref Box box, Pred pred)
+DenseBox!(Box.T, Box.shape.dropAxis(axis)) fold(AxisIndex axis, Box, Pred)(const auto ref Box box, Pred pred)
 if (isBox!Box)
 {
 	return fold!([axis])(box, pred);
@@ -445,7 +448,7 @@ auto byRef(Box)(ref Box box)
 
 /// Reduce the dimensionality of `box` by taking just one row/column from a given axis.
 /// `AxisValue` is a nullary `size_t` box holding the axis value to slice.
-struct SliceOne(Box, size_t axis, AxisValue)
+struct SliceOne(Box, AxisIndex axis, AxisValue)
 if (isBox!Box && isBoxOf!(AxisValue, size_t))
 {
 	Box value;
@@ -501,12 +504,12 @@ if (isBox!Box && isBoxOf!(AxisValue, size_t))
 	}
 }
 
-auto sliceOne(size_t axis, size_t axisValue, Box)(Box box)
+auto sliceOne(AxisIndex axis, size_t axisValue, Box)(Box box)
 {
 	return SliceOne!(Box, axis, typeof(constant!axisValue()))(box);
 } /// ditto
 
-auto sliceOne(size_t axis, Box)(Box box, size_t axisValue)
+auto sliceOne(AxisIndex axis, Box)(Box box, size_t axisValue)
 {
 	auto v = variable(axisValue);
 	return SliceOne!(Box, axis, typeof(v))(box, v);
@@ -553,8 +556,8 @@ Variable!T variable(T)(T value) { return Variable!T(value); } /// ditto
 
 // ----------------------------------------------------------------------------
 
-/// Increase the dimensionality of `box` by adding dimensions at the given axis position.
-struct Repeat(Box, Shape addedShape, size_t where = 0)
+/// Increase the dimensionality of `box` by inserting dimensions at the given axis position.
+struct Repeat(Box, Shape addedShape, AxisIndex where = 0)
 if (isBox!Box)
 {
 	alias T = Box.T;
@@ -601,8 +604,8 @@ if (isBox!Box)
 		return value[nextIndex];
 	}
 }
-Repeat!(Box, shape     , where) repeat(Shape shape, size_t where = 0, Box)(auto ref Box box) if (isBox!Box) { return Repeat!(Box, shape     , where)(box); } /// ditto
-Repeat!(Box, Shape([n]), where) repeat(size_t n   , size_t where = 0, Box)(auto ref Box box) if (isBox!Box) { return Repeat!(Box, Shape([n]), where)(box); } /// ditto
+Repeat!(Box, shape     , where) repeat(Shape shape, AxisIndex where = 0, Box)(auto ref Box box) if (isBox!Box) { return Repeat!(Box, shape     , where)(box); } /// ditto
+Repeat!(Box, Shape([n]), where) repeat(size_t n   , AxisIndex where = 0, Box)(auto ref Box box) if (isBox!Box) { return Repeat!(Box, Shape([n]), where)(box); } /// ditto
 
 unittest
 {
@@ -620,7 +623,7 @@ unittest
 
 // ----------------------------------------------------------------------------
 
-Index!(shape.swapAxes(axis1, axis2)) swapAxes(size_t axis1, size_t axis2, Shape shape)(Index!shape index)
+Index!(shape.swapAxes(axis1, axis2)) swapAxes(AxisIndex axis1, AxisIndex axis2, Shape shape)(Index!shape index)
 {
 	import std.algorithm.mutation : swap;
 	size_t[shape.dims.length] indices = index.indices;
@@ -628,7 +631,7 @@ Index!(shape.swapAxes(axis1, axis2)) swapAxes(size_t axis1, size_t axis2, Shape 
 	return Index!(shape.swapAxes(axis1, axis2))(indices);
 }
 
-struct SwapAxes(Box, size_t axis1, size_t axis2)
+struct SwapAxes(Box, AxisIndex axis1, AxisIndex axis2)
 if (isBox!Box)
 {
 	alias T = Box.T;
@@ -651,7 +654,7 @@ if (isBox!Box)
 		return value[index.swapAxes!(axis1, axis2)];
 	}
 }
-SwapAxes!(Box, axis1, axis2) swapAxes(size_t axis1, size_t axis2, Box)(auto ref Box box) if (isBox!Box) { return SwapAxes!(Box, axis1, axis2)(box); } /// ditto
+SwapAxes!(Box, axis1, axis2) swapAxes(AxisIndex axis1, AxisIndex axis2, Box)(auto ref Box box) if (isBox!Box) { return SwapAxes!(Box, axis1, axis2)(box); } /// ditto
 
 unittest
 {

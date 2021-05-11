@@ -475,7 +475,7 @@ auto trainableInput(R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { re
 
 
 /// Adds values in a box along an axis.
-struct Add(Parent, size_t[] axes)
+struct Add(Parent, AxisIndex[] axes)
 if (isTensor!Parent)
 {
 	alias Parents = AliasSeq!Parent;
@@ -520,13 +520,13 @@ if (isTensor!Parent)
 	static assert(isTensor!(typeof(this)));
 }
 
-Add!(Parent, axes) add(size_t[] axes = [0], Parent)(Parent parent)
+Add!(Parent, axes) add(AxisIndex[] axes = [0], Parent)(Parent parent)
 if (isTensor!Parent)
 {
 	return Add!(Parent, axes)();
 } /// ditto
 
-Add!(Parent, [axis]) add(size_t axis, Parent)(Parent parent)
+Add!(Parent, [axis]) add(AxisIndex axis, Parent)(Parent parent)
 if (isTensor!Parent)
 {
 	return Add!(Parent, [axis])();
@@ -557,7 +557,7 @@ unittest
 /// Note: if the sign is wrong, the backpropagation step fixes this
 /// by inverting the sign of the first multiplicand,
 /// so that probably should probably be the weight in a NN layer.
-struct Multiply(Parent, size_t axis)
+struct Multiply(Parent, AxisIndex axis)
 if (isTensor!Parent)
 {
 	alias Parents = AliasSeq!Parent;
@@ -613,7 +613,7 @@ if (isTensor!Parent)
 	static assert(isTensor!(typeof(this)));
 }
 
-Multiply!(Parent, axis) multiply(size_t axis = 0, Parent)(Parent parent)
+Multiply!(Parent, axis) multiply(AxisIndex axis = 0, Parent)(Parent parent)
 if (isTensor!Parent)
 {
 	return Multiply!(Parent, axis)();
@@ -644,7 +644,7 @@ unittest
 // ----------------------------------------------------------------------------
 
 
-struct Concatenate(size_t axis, _Parents...)
+struct Concatenate(AxisIndex axis, _Parents...)
 if (allSatisfy!(isTensor, _Parents))
 {
 	alias Parents = _Parents;
@@ -698,7 +698,7 @@ if (allSatisfy!(isTensor, _Parents))
 	static assert(isTensor!(typeof(this)));
 }
 
-Concatenate!(axis, Parents) concatenate(size_t axis = 0, Parents...)(Parents parents)
+Concatenate!(axis, Parents) concatenate(AxisIndex axis = 0, Parents...)(Parents parents)
 if (allSatisfy!(isTensor, Parents))
 {
 	return Concatenate!(axis, Parents)();
@@ -747,7 +747,7 @@ unittest
 
 
 /// Reduce the dimensionality of a tensor by taking just one row/column from a given axis.
-struct SliceOne(size_t axis, size_t index, Parent)
+struct SliceOne(AxisIndex axis, size_t index, Parent)
 if (isTensor!Parent)
 {
 	alias Parents = AliasSeq!Parent;
@@ -782,7 +782,7 @@ if (isTensor!Parent)
 	static assert(isTrainable!(typeof(this)) == isTrainable!Parents);
 }
 
-SliceOne!(axis, index, Parent) sliceOne(size_t axis, size_t index, Parent)(Parent parent)
+SliceOne!(axis, index, Parent) sliceOne(AxisIndex axis, size_t index, Parent)(Parent parent)
 if (isTensor!Parent)
 {
 	return SliceOne!(axis, index, Parent)();
@@ -792,8 +792,8 @@ if (isTensor!Parent)
 // ----------------------------------------------------------------------------
 
 
-/// Adds dimensions to the front of `Parent` with the given shape.
-struct Repeat(Parent, Shape shape, size_t where)
+/// Increases the dimensionality of `Parent` by inserting axes with the given shape at the given position.
+struct Repeat(Parent, Shape shape, AxisIndex where)
 if (isTensor!Parent)
 {
 	alias Parents = AliasSeq!Parent;
@@ -823,13 +823,13 @@ if (isTensor!Parent)
 	static assert(isTrainable!(typeof(this)) == isTrainable!Parent);
 }
 
-Repeat!(Parent, shape, where) repeat(Shape shape, size_t where = 0, Parent)(Parent parent)
+Repeat!(Parent, shape, where) repeat(Shape shape, AxisIndex where = 0, Parent)(Parent parent)
 if (isTensor!Parent)
 {
 	return Repeat!(Parent, shape, where)();
 } /// ditto
 
-Repeat!(Parent, Shape([n]), where) repeat(size_t n, size_t where = 0, Parent)(Parent parent)
+Repeat!(Parent, Shape([n]), where) repeat(size_t n, AxisIndex where = 0, Parent)(Parent parent)
 if (isTensor!Parent)
 {
 	return Repeat!(Parent, Shape([n]), where)();
@@ -839,7 +839,7 @@ if (isTensor!Parent)
 // ----------------------------------------------------------------------------
 
 
-struct SwapAxes(Parent, size_t axis1, size_t axis2)
+struct SwapAxes(Parent, AxisIndex axis1, AxisIndex axis2)
 if (isTensor!Parent)
 {
 	alias Parents = AliasSeq!Parent;
@@ -869,7 +869,7 @@ if (isTensor!Parent)
 	static assert(isTrainable!(typeof(this)) == isTrainable!Parent);
 }
 
-SwapAxes!(Parent, axis1, axis2) swapAxes(size_t axis1, size_t axis2, Parent)(Parent parent)
+SwapAxes!(Parent, axis1, axis2) swapAxes(AxisIndex axis1, AxisIndex axis2, Parent)(Parent parent)
 if (isTensor!Parent)
 {
 	return SwapAxes!(Parent, axis1, axis2)();
@@ -881,7 +881,7 @@ if (isTensor!Parent)
 
 /// Transform values across axes after `firstAxis` according to a
 /// trainable dense linear layer.
-auto linearDense(Shape outputShape, size_t firstAxis = 1, Parent)(Parent parent)
+auto linearDense(Shape outputShape, AxisIndex firstAxis = 1, Parent)(Parent parent)
 {
 	// Divide input dimensions according to those which will be
 	// preserved (e.g. the batch size) and those that will be
@@ -936,7 +936,7 @@ auto linearDense(Shape outputShape, size_t firstAxis = 1, Parent)(Parent parent)
 	;
 }
 
-auto linearDense(size_t numOutputs, size_t firstAxis = 1, Parent)(Parent parent) { return linearDense!(Shape([numOutputs]), firstAxis)(parent); }
+auto linearDense(size_t numOutputs, AxisIndex firstAxis = 1, Parent)(Parent parent) { return linearDense!(Shape([numOutputs]), firstAxis)(parent); }
 
 
 // ----------------------------------------------------------------------------
@@ -1197,7 +1197,7 @@ unittest
 ///  aggregationAxis = Indicates the axis index along which the sum will be calculated.
 ///  roleAxis        = Indicates the axis which distinguishes the value and the weight.
 ///                    Its length should be 2.
-struct WeightedAverage(Parent, size_t aggregationAxis = 1, size_t roleAxis = 2)
+struct WeightedAverage(Parent, AxisIndex aggregationAxis = 1, AxisIndex roleAxis = 2)
 if (isTensor!Parent)
 {
 	alias Parents = AliasSeq!Parent;
@@ -1309,7 +1309,7 @@ if (isTensor!Parent)
 	static assert(isTrainable!(typeof(this)) == isTrainable!Parent);
 }
 
-WeightedAverage!(Parent, aggregationAxis, roleAxis) weightedAverage(size_t aggregationAxis = 1, size_t roleAxis = 2, Parent)(Parent parent)
+WeightedAverage!(Parent, aggregationAxis, roleAxis) weightedAverage(AxisIndex aggregationAxis = 1, AxisIndex roleAxis = 2, Parent)(Parent parent)
 {
 	return WeightedAverage!(Parent, aggregationAxis, roleAxis)();
 }/// ditto
@@ -1378,7 +1378,7 @@ unittest
 ///  aggregationAxis = Indicates the axis index along which the sum will be calculated.
 ///  roleAxis        = Indicates the axis which distinguishes the value and the weight.
 ///                    Its length should be 2.
-struct SoftmaxWeightedAverage(Parent, size_t aggregationAxis = 1, size_t roleAxis = 2)
+struct SoftmaxWeightedAverage(Parent, AxisIndex aggregationAxis = 1, AxisIndex roleAxis = 2)
 if (isTensor!Parent)
 {
 	alias Parents = AliasSeq!Parent;
@@ -1506,7 +1506,7 @@ if (isTensor!Parent)
 	static assert(isTrainable!(typeof(this)) == isTrainable!Parent);
 }
 
-SoftmaxWeightedAverage!(Parent, aggregationAxis, roleAxis) softmaxWeightedAverage(size_t aggregationAxis = 1, size_t roleAxis = 2, Parent)(Parent parent)
+SoftmaxWeightedAverage!(Parent, aggregationAxis, roleAxis) softmaxWeightedAverage(AxisIndex aggregationAxis = 1, AxisIndex roleAxis = 2, Parent)(Parent parent)
 {
 	return SoftmaxWeightedAverage!(Parent, aggregationAxis, roleAxis)();
 }/// ditto
@@ -1517,7 +1517,7 @@ SoftmaxWeightedAverage!(Parent, aggregationAxis, roleAxis) softmaxWeightedAverag
 // ///  aggregationAxis = Indicates the axis index along which the sum will be calculated.
 // ///  roleAxis        = Indicates the axis which distinguishes the value and the weight.
 // ///                    Its length should be 2.
-// auto softmaxWeightedAverage(size_t aggregationAxis = 1, size_t roleAxis = 2, Parent)(Parent parent)
+// auto softmaxWeightedAverage(AxisIndex aggregationAxis = 1, AxisIndex roleAxis = 2, Parent)(Parent parent)
 // {
 // 	enum Role : size_t
 // 	{
