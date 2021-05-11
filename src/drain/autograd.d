@@ -12,11 +12,11 @@ import std.range.primitives;
 import std.traits;
 debug import std.format;
 
-import drain.shapes;
-import shapes = drain.shapes;
+import drain.box.shapes;
+import shapes = drain.box.shapes;
 
 // Introduce overloads
-private import drain.shapes : constant, Constant, repeat, Repeat, swapAxes, SwapAxes, sliceOne;
+private import drain.box.shapes : constant, Constant, repeat, Repeat, swapAxes, SwapAxes, sliceOne;
 private import std.math : exp;
 
 // debug = verbose;

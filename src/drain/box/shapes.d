@@ -1,4 +1,4 @@
-module drain.shapes;
+module drain.box.shapes;
 
 import std.algorithm.comparison;
 import std.algorithm.iteration;
