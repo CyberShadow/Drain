@@ -19,8 +19,8 @@ import shapes = drain.box.shapes;
 private import drain.box.shapes : constant, Constant, repeat, Repeat, swapAxes, SwapAxes, sliceOne;
 private import std.math : exp;
 
-// debug = verbose;
-debug (verbose) import std.stdio;
+// debug = drain_verbose;
+debug (drain_verbose) import std.stdio;
 
 // ----------------------------------------------------------------------------
 
@@ -146,7 +146,7 @@ struct AdaGrad(
 				auto diff = g / sqrt(mn + eps.value);
 				storageFor!Tensor.m[i] = mn;
 
-				debug (verbose) writefln("AdaGrad: Adjusting value at %s from %s to %s (for %s)",
+				debug (drain_verbose) writefln("AdaGrad: Adjusting value at %s from %s to %s (for %s)",
 					i,
 					tensor.value[i],
 					tensor.value[i] + diff * -learningRate.value,
@@ -215,7 +215,7 @@ struct ADAM(
 				storageFor!Tensor.m1[i] = nextM1;
 				storageFor!Tensor.m2[i] = nextM2;
 
-				debug (verbose) writefln("ADAM: Adjusting value at %s from %s to %s (for %s)",
+				debug (drain_verbose) writefln("ADAM: Adjusting value at %s from %s to %s (for %s)",
 					i,
 					tensor.value[i],
 						tensor.value[i] + diff * -learningRate.value,
@@ -273,7 +273,7 @@ struct Graph(Optimizer, Outputs...)
 {
 	alias Tensors = SortTensors!Outputs;
 
-	debug (verbose)
+	debug (drain_verbose)
 	{
 		pragma(msg, "Graph tensors:");
 		static foreach (Tensor; Tensors)
@@ -492,7 +492,7 @@ if (isTensor!Parent)
 			v = 0;
 		foreach (i; parents[0].value.indexIterator)
 			value[i.dropAxes!axes] += parents[0].value[i];
-		debug (verbose)
+		debug (drain_verbose)
 		{
 			(ref Parents parents){
 				import std.algorithm;
@@ -574,7 +574,7 @@ if (isTensor!Parent)
 			v = 1;
 		foreach (i; parents[0].value.indexIterator)
 			value[i.dropAxis!axis] *= parents[0].value[i];
-		debug (verbose)
+		debug (drain_verbose)
 		{
 			(ref Parents parents){
 				import std.stdio, std.algorithm;
@@ -961,7 +961,7 @@ template Unary(alias forwardFunc, alias backwardFunc, string _name)
 			foreach (i; parents[0].value.indexIterator)
 			{
 				value[i] = forwardFunc(parents[0].value[i]);
-				debug (verbose)
+				debug (drain_verbose)
 					writefln("%s: %s(%s) = %s", i, _name, parents[0].value[i], value[i]);
 			}
 		}
@@ -1048,7 +1048,7 @@ private void testProblem(Graph, Input, Output, size_t numObservations)(
 
 	foreach (epoch; 0 .. 1024 * 4 / numObservations)
 	{
-		debug (verbose)
+		debug (drain_verbose)
 		{
 			writefln("\n=== Epoch %d ===", epoch);
 			foreach (ref tensor; graph.tensors)
@@ -1057,7 +1057,7 @@ private void testProblem(Graph, Input, Output, size_t numObservations)(
 		}
 		foreach (i; numObservations.iota/*.randomCover*/)
 		{
-			debug (verbose) { import std.stdio; writefln("--- %s -> %s :", inputs[i], labels[i]); }
+			debug (drain_verbose) { import std.stdio; writefln("--- %s -> %s :", inputs[i], labels[i]); }
 			graph.forward (inputs[i].box);
 			graph.backward(labels[i].box);
 		}
@@ -1068,7 +1068,7 @@ private void testProblem(Graph, Input, Output, size_t numObservations)(
 		graph.forward(inputs[i].box);
 		auto output = graph.tensors[$-1].value.valueIterator.front;
 		auto label = labels[i].box.valueIterator.front;
-		debug (verbose) { import std.stdio; writefln("%s -> %s / %s", inputs[i], output, label); }
+		debug (drain_verbose) { import std.stdio; writefln("%s -> %s / %s", inputs[i], output, label); }
 		assert(round(output) == round(label));
 	}
 }
