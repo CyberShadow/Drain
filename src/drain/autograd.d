@@ -494,19 +494,19 @@ if (isBox!Box)
 
 /// A non-trainable non-input value.
 alias Constant      (Box, string name = "constant") = Value!(Box, false, false, name);
-auto constant      (R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return Constant      !(ElementType!R)(); } /// ditto
+auto constant      (string name = "constant"      , R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return Constant      !(ElementType!R, name)(); } /// ditto
 
 /// A trainable non-input value.
 alias Variable      (Box, string name = "variable") = Value!(Box, false, true , name);
-auto variable      (R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return Variable      !(ElementType!R)(); } /// ditto
+auto variable      (string name = "variable"      , R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return Variable      !(ElementType!R, name)(); } /// ditto
 
 /// A non-trainable input value.
 alias Input         (Box, string name = "input") = Value!(Box, true , false, name);
-auto input         (R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return Input         !(ElementType!R)(); } /// ditto
+auto input         (string name = "input"         , R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return Input         !(ElementType!R, name)(); } /// ditto
 
 /// A trainable input value.
 alias TrainableInput(Box, string name = "trainableInput") = Value!(Box, true , true , name);
-auto trainableInput(R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return TrainableInput!(ElementType!R)(); } /// ditto
+auto trainableInput(string name = "trainableInput", R)(R data) if (isInputRange!R && isBox!(ElementType!R)) { return TrainableInput!(ElementType!R, name)(); } /// ditto
 
 
 // ----------------------------------------------------------------------------
