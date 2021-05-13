@@ -332,6 +332,16 @@ struct Graph(Optimizer, Outputs...)
 	/// Reference to output tensors.
 	alias outputTensors = tensorInstances!Outputs;
 
+	private template hasName(string name) { enum hasName(alias tensor) = tensor.name == name; }
+	alias tensorsByName(string name) = Filter!(hasName!name, tensors); /// Find a tensor by name.
+	template tensorByName(string name)
+	{
+		alias result = tensorsByName!name;
+		static assert(result.length > 0, "No tensor with this name");
+		static assert(result.length < 2, "Multiple tensors with this name");
+		alias tensorByName = result[0];
+	} /// ditto
+
 	private alias OptimizerInstance = typeof(Optimizer.init.initialize(tensors));
 	/// The optimizer instantiated over this graph.
 	OptimizerInstance optimizer;
