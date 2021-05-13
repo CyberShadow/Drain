@@ -350,13 +350,28 @@ struct Graph(Optimizer, Outputs...)
 	}
 
 	/// Calculate output from the given input.
-	void forward(staticMap!(TensorValue, typeof(inputTensors)) input)
+	void forward(
+		staticMap!(TensorValue, typeof(inputTensors)) inputs,
+		ref staticMap!(TensorValue, typeof(outputTensors)) outputs,
+	)
 	{
 		static foreach (i; 0 .. inputTensors.length)
-			inputTensors[i].value = input[i];
+			inputTensors[i].value = inputs[i];
 
 		foreach (i, ref tensor; tensors)
 			tensor.forward(tensorInstances!(typeof(tensor).Parents));
+
+		static foreach (i; 0 .. outputTensors.length)
+			outputs[i] = outputTensors[i].value;
+	}
+
+	/// ditto
+	static if (outputTensors.length == 1)
+	typeof(outputTensors[0].value) forward(staticMap!(TensorValue, typeof(inputTensors)) inputs)
+	{
+		typeof(return) output;
+		forward(inputs, output);
+		return output;
 	}
 
 	/// Fit the graph to the given labels.
@@ -564,8 +579,7 @@ unittest
 		.add
 	);
 
-	graph.forward(inputData[0].box);
-	assert(graph.tensors[$-1].value.valueIterator.front == 3f);
+	assert(graph.forward(inputData[0].box).valueIterator.front == 3f);
 
 	// float label = 5f;
 	// graph.testGradient(label.box);
@@ -651,8 +665,7 @@ unittest
 		.multiply
 	);
 
-	graph.forward(inputData[0].box);
-	assert(graph.tensors[$-1].value.valueIterator.front == 6f);
+	assert(graph.forward(inputData[0].box).valueIterator.front == 6f);
 
 	// float label = 24f;
 	// graph.testGradient(label.box);
@@ -739,8 +752,7 @@ unittest
 		)
 	);
 
-	graph.forward(input1[0].box, input2[0].box);
-	assert(graph.tensors[$-1].value.valueIterator == [1, 2, 3]);
+	assert(graph.forward(input1[0].box, input2[0].box).valueIterator == [1, 2, 3]);
 }
 
 unittest
@@ -756,8 +768,7 @@ unittest
 		.add!0
 	);
 
-	graph.forward(input1[0].box, input2[0].box);
-	assert(graph.tensors[$-1].value.valueIterator == [6]);
+	assert(graph.forward(input1[0].box, input2[0].box).valueIterator == [6]);
 
 	// float label = 9f;
 	// graph.testGradient(label.box);
@@ -1088,8 +1099,7 @@ private void testProblem(Graph, Input, Output, size_t numObservations)(
 
 	foreach (i; 0 .. numObservations)
 	{
-		graph.forward(inputs[i].box);
-		auto output = graph.tensors[$-1].value.valueIterator.front;
+		auto output = graph.forward(inputs[i].box).valueIterator.front;
 		auto label = labels[i].box.valueIterator.front;
 		debug (drain_verbose) { import std.stdio; writefln("%s -> %s / %s", inputs[i], output, label); }
 		assert(round(output) == round(label));
