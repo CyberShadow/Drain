@@ -87,7 +87,7 @@ if (isTensor!Tensor)
 // ----------------------------------------------------------------------------
 
 
-struct NullOptimizer(LearningRate = Constant!(float, 0.1f))
+struct NullOptimizer(LearningRate)
 {
 	LearningRate learningRate;
 
@@ -110,11 +110,13 @@ struct NullOptimizer(LearningRate = Constant!(float, 0.1f))
 	}
 }
 
+NullOptimizer!(LearningRate) nullOptimizer(LearningRate = typeof(constant!0.1f()))(LearningRate learningRate = LearningRate())
+{
+	return NullOptimizer!(LearningRate)(learningRate);
+}
 
-struct AdaGrad(
-	LearningRate = Constant!(float, 0.1f),
-	Eps = Constant!(float, 1e-8f),
-)
+
+struct AdaGrad(LearningRate, Eps)
 {
 	LearningRate learningRate;
 	Eps eps;
@@ -169,14 +171,20 @@ struct AdaGrad(
 		return instance;
 	}
 }
-
-
-struct ADAM(
-	LearningRate = Constant!(float, 0.1f),
-	Beta1 = Constant!(float, 0.9),
-	Beta2 = Constant!(float, 0.999),
-	Eps   = Constant!(float, 1e-8f),
+AdaGrad!(LearningRate, Eps) adaGrad(
+	// https://issues.dlang.org/show_bug.cgi?id=21917
+	LearningRate = typeof(constant!0.1f()),
+	Eps          = typeof(constant!1e-8f()),
+)(
+	LearningRate learningRate = LearningRate(),
+	Eps          eps          = Eps(),
 )
+{
+	return AdaGrad!(LearningRate)(learningRate);
+}
+
+
+struct Adam(LearningRate, Beta1, Beta2, Eps)
 {
 	LearningRate learningRate;
 	Beta1 beta1;
@@ -241,6 +249,21 @@ struct ADAM(
 			}
 		return instance;
 	}
+}
+Adam!(LearningRate, Beta1, Beta2, Eps) adam(
+	// https://issues.dlang.org/show_bug.cgi?id=21917
+	LearningRate = typeof(constant!0.1f()),
+	Beta1        = typeof(constant!0.9f()),
+	Beta2        = typeof(constant!0.999f()),
+	Eps          = typeof(constant!1e-8f()),
+)(
+	LearningRate learningRate = LearningRate(),
+	Beta1        beta1        = Beta1       (),
+	Beta2        beta2        = Beta2       (),
+	Eps          eps          = Eps         (),
+)
+{
+	return Adam!(LearningRate, Beta1, Beta2, Eps)(learningRate, beta1, beta2, eps);
 }
 
 
@@ -535,7 +558,7 @@ if (isTensor!Parent)
 unittest
 {
 	float[2][1] inputData = [[1f, 2f]];
-	auto graph = graph(NullOptimizer!()(),
+	auto graph = graph(nullOptimizer(),
 		inputData[].boxes
 		.trainableInput
 		.add
@@ -622,7 +645,7 @@ if (isTensor!Parent)
 unittest
 {
 	float[2][1] inputData = [[2f, 3f]];
-	auto graph = graph(NullOptimizer!()(),
+	auto graph = graph(nullOptimizer(),
 		inputData[].boxes
 		.trainableInput
 		.multiply
@@ -708,7 +731,7 @@ unittest
 {
 	float[2][1] input1 = [[1f, 2f]];
 	float[1][1] input2 = [[3f]];
-	auto graph = graph(NullOptimizer!()(),
+	auto graph = graph(nullOptimizer(),
 		concatenate!0
 		(
 			input1[].boxes.input,
@@ -724,7 +747,7 @@ unittest
 {
 	float[2][1] input1 = [[1f, 2f]];
 	float[1][1] input2 = [[3f]];
-	auto graph = graph(NullOptimizer!()(),
+	auto graph = graph(nullOptimizer(),
 		concatenate!0
 		(
 			input1[].boxes.trainableInput,
@@ -1089,7 +1112,7 @@ unittest
 		labels[i] = [inputs[i][0] * 3f * scale + 4f * scale];
 	}
 
-	auto graph = graph(ADAM!()(),
+	auto graph = graph(adam(),
 		inputs[].boxes
 		.input
 		.linearDense!(Shape())
@@ -1104,7 +1127,7 @@ unittest
 
 	float[1][3] inputs = [[1], [2], [3]];
 	float[1][3] labels = [[3], [5], [7]];
-	auto graph = graph(ADAM!()(),
+	auto graph = graph(adam(),
 		inputs[].boxes
 		.input
 		.linearDense!(Shape())
@@ -1127,7 +1150,7 @@ unittest
 		labels[0][i] = [inputs[0][i][0] * 3f + inputs[0][i][1] * 4f + 5f];
 	}
 
-	auto graph = graph(ADAM!()(),
+	auto graph = graph(adam(),
 		inputs[].boxes
 		.input
 		.linearDense!1
@@ -1152,7 +1175,7 @@ unittest
 		labels[0][i][0] = i % 2;
 	}
 
-	auto graph = graph(ADAM!()(),
+	auto graph = graph(adam(),
 		inputs[].boxes
 		.input
 		.linearDense!1
@@ -1178,7 +1201,7 @@ unittest
 		labels[i][0] = [inputs[i][0][0] != inputs[i][0][1]];
 	}
 
-	auto graph = graph(ADAM!(Constant!(float, 0.01f))(),
+	auto graph = graph(adam(constant!0.01f()),
 		inputs[].boxes
 		.input
 		.linearDense!4
@@ -1357,7 +1380,7 @@ unittest
 		labels[i] = result;
 	}
 
-	auto graph = graph(ADAM!()(),
+	auto graph = graph(adam(),
 		inputs[].boxes
 		.input
 		// timesteps x features
@@ -1612,7 +1635,7 @@ unittest
 		labels[i] = result;
 	}
 
-	auto graph = graph(ADAM!()(),
+	auto graph = graph(adam(),
 		inputs[].boxes
 		.input
 		// timesteps x features
