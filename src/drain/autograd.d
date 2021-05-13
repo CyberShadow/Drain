@@ -329,9 +329,11 @@ struct Graph(Optimizer, Outputs...)
 			);
 	}
 
-	private alias outputTensors = tensorInstances!Outputs;
+	/// Reference to output tensors.
+	alias outputTensors = tensorInstances!Outputs;
 
 	private alias OptimizerInstance = typeof(Optimizer.init.initialize(tensors));
+	/// The optimizer instantiated over this graph.
 	OptimizerInstance optimizer;
 
 	this(ref Optimizer optimizer)
