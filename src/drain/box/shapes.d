@@ -164,12 +164,14 @@ unittest
 /// The nullary index.
 enum nullIndex = Index!(Shape.init).init;
 
+
 /// Iterates over all valid indices in `shape`.
 struct ShapeIterator(Shape _shape)
 {
 	enum shape = _shape; /// Parent shape.
 	Index!shape front; /// Range primitives.
-	bool empty; /// ditto
+
+	bool empty = shape.count == 0; /// ditto
 
 	void popFront() nothrow @nogc
 	{
@@ -185,6 +187,28 @@ struct ShapeIterator(Shape _shape)
 	} /// ditto
 }
 
+unittest
+{
+	enum shape = Shape([2]);
+	assert(ShapeIterator!shape().equal([
+		Index!shape([0]),
+		Index!shape([1]),
+	]));
+}
+
+unittest
+{
+	enum shape = Shape([]);
+	assert(ShapeIterator!shape().equal([
+		Index!shape([]),
+	]));
+}
+
+unittest
+{
+	enum shape = Shape([0]);
+	assert(ShapeIterator!shape().equal((Index!shape[]).init));
+}
 
 
 // ----------------------------------------------------------------------------
@@ -581,7 +605,7 @@ if (isBox!Box)
 				return nextIndex.front.addAxes!where(thisIndex.front);
 			}
 
-			@property bool empty() { return thisIndex.empty; }
+			@property bool empty() { return thisIndex.empty || nextIndex.empty; }
 
 			void popFront()
 			{
