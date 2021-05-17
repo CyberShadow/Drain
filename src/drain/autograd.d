@@ -15,6 +15,8 @@ debug import std.format;
 import drain.box.shapes;
 import shapes = drain.box.shapes;
 
+import drain.util;
+
 // Introduce overloads
 private import drain.box.shapes : constant, Constant, repeat, Repeat, swapAxes, SwapAxes, sliceOne;
 private import std.math : exp;
@@ -700,8 +702,7 @@ if (allSatisfy!(isTensor, _Parents))
 	private alias TensorType(Tensor) = typeof(Tensor.value).T;
 	alias T = CommonType!(staticMap!(TensorType, Parents));
 
-	private alias tensorName(Tensor) = Tensor.name;
-	enum name = "[" ~ [staticMap!(tensorName, Parents)].join(", ") ~ "].concatenate";
+	enum name = tensorGroupName!Parents ~ ".concatenate";
 
 	private enum tensorShape(Tensor) = Tensor.value.shape;
 	private enum outputShape = Shape.concatenate(axis, staticMap!(tensorShape, Parents));
