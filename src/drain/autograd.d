@@ -46,11 +46,21 @@ enum isTensor(Tensor) = true
 	/// mechanism when the type otherwise coincides.
 	&& __traits(hasMember, Tensor, q{name})
 
-	/// Function which populates `value`.
+	/// The type of the tensor's value
+	/// (and also the return type of `getValue`).
+	/// Necessary because the `getValue` implementation
+	/// is templated on the full graph.
+	&& __traits(hasMember, Tensor, q{Value})
+
+	/// Calculates this tensor's value, if necessary,
+	/// making `getValue` calls available.
+	/// May be empty (if this tensor's value can be
+	/// calculated in O(1) per index).
 	&& __traits(hasMember, Tensor, q{forward})
 
-	/// Output value (Box).
-	&& isBox!(typeof(Tensor.value))
+	/// Returns a box which holds this tensor's value.
+	/// Should be O(1), and reading from the returned value should be O(1).
+	&& __traits(hasMember, Tensor, q{getValue})
 ;
 
 
@@ -60,15 +70,15 @@ if (isTensor!Tensor)
 {
 	enum isTrainable = true
 
-		/// Function which applies and further propagates the gradient.
-		/// The gradient should be reset (to zeroes) after the call.
-		&& __traits(hasMember, Tensor, q{backward})
+		/// Returns a writable box which holds this tensor's gradient.
+		/// Should be O(1), and reading/writing to the returned value should be O(1).
+		&& __traits(hasMember, Tensor, q{getGradient})
 
-		/// The counterpart of `value`.
-		/// Populated by child tensors' `backward` functions.
-		/// Read by this tensor`s `backward` function.
-		&& isBox!(typeof(Tensor.gradient))
-		&& Tensor.gradient.shape == Tensor.value.shape
+		/// Function which applies and further propagates the gradient.
+		/// The gradient should be reset (to zeroes) after the call, if applicable.
+		/// May be empty (if this tensor's gradient can be
+		/// propagated in O(1) per index).
+		&& __traits(hasMember, Tensor, q{backward})
 	;
 }
 
@@ -82,6 +92,10 @@ if (isTensor!Tensor)
 
 		&& __traits(hasMember, Tensor, q{isOptimizable})
 		&& Tensor.isOptimizable
+
+		// Optimizable tensors should be stateful.
+		&& isBox!(typeof(Tensor.value))
+		&& isBox!(typeof(Tensor.gradient))
 	;
 }
 
@@ -316,20 +330,22 @@ struct Graph(Optimizer, Outputs...)
 	private enum isInputTensor(alias tensor) = __traits(hasMember, typeof(tensor), q{isInput}) && typeof(tensor).isInput;
 	private alias inputTensors = Filter!(isInputTensor, tensors);
 
-	private alias TensorValue(Tensor) = typeof(Tensor.value);
+	private alias TensorValue(Tensor) = Tensor.Value;
 
 	private enum isTrainable = allSatisfy!(.isTrainable, typeof(outputTensors));
 
-	private template tensorInstances(SoughtTensors...)
+	/// Find a tensor by type.
+	alias tensorInstance(SoughtTensor) = tensors[staticIndexOf!(SoughtTensor, Tensors)];
+	template tensorInstances(SoughtTensors...)
 	{
 		static if (SoughtTensors.length == 0)
 			alias tensorInstances = AliasSeq!();
 		else
 			alias tensorInstances = AliasSeq!(
-				tensors[staticIndexOf!(SoughtTensors[0], Tensors)],
+				tensorInstance!(SoughtTensors[0]),
 				tensorInstances!(SoughtTensors[1 .. $])
 			);
-	}
+	} /// ditto
 
 	/// Reference to output tensors.
 	alias outputTensors = tensorInstances!Outputs;
@@ -370,18 +386,18 @@ struct Graph(Optimizer, Outputs...)
 	)
 	{
 		static foreach (i; 0 .. inputTensors.length)
-			inputTensors[i].value = inputs[i];
+			inputTensors[i].getValue(this) = inputs[i];
 
 		foreach (i, ref tensor; tensors)
-			tensor.forward(tensorInstances!(typeof(tensor).Parents));
+			tensor.forward(this);
 
 		static foreach (i; 0 .. outputTensors.length)
-			outputs[i] = outputTensors[i].value;
+			outputs[i] = outputTensors[i].getValue(this);
 	}
 
 	/// ditto
 	static if (outputTensors.length == 1)
-	typeof(outputTensors[0].value) forward(staticMap!(TensorValue, typeof(inputTensors)) inputs)
+	Outputs[0].Value forward(staticMap!(TensorValue, typeof(inputTensors)) inputs)
 	{
 		typeof(return) output;
 		forward(inputs, output);
@@ -394,14 +410,14 @@ struct Graph(Optimizer, Outputs...)
 	{
 		static foreach (ti; 0 .. outputTensors.length)
 			foreach (i; output[ti].indexIterator)
-				outputTensors[ti].gradient[i] = outputTensors[ti].value[i] - output[ti][i];
+				outputTensors[ti].getGradient(this)[i] = outputTensors[ti].getValue(this)[i] - output[ti][i];
 
 		foreach_reverse (i, ref tensor; tensors)
 		{
 			static if (.isOptimizable!(typeof(tensor)))
 				optimizer.run(tensor);
 			static if (.isTrainable!(typeof(tensor)))
-				tensor.backward(tensorInstances!(typeof(tensor).Parents));
+				tensor.backward(this);
 		}
 	}
 
@@ -412,7 +428,7 @@ struct Graph(Optimizer, Outputs...)
 		foreach_reverse (ref tensor; tensorInstances!Tensors)
 		{
 			static assert (.isTrainable!(typeof(tensor)));
-			tensor.backward(tensorInstances!(typeof(tensor).Parents));
+			tensor.backward(this);
 		}
 	}
 
@@ -479,10 +495,12 @@ if (isBox!Box)
 	alias Parents = AliasSeq!(); /// No parents.
 	enum name = _name;
 
+	alias Value = Box;
 	Box value; /// Value is fed in by graph methods.
+	ref Box getValue(Graph)(ref Graph graph) { return value; } /// ditto
 
 	/// No-op.
-	void forward(ref Parents parents) {}
+	void forward(Graph)(ref Graph graph) {}
 
 	/// Tells `Graph` whether populate `value`.
 	enum isInput = _isInput;
@@ -493,8 +511,9 @@ if (isBox!Box)
 	static if (_isTrainable)
 	{
 		Box gradient; /// Gradient input.
+		ref Box getGradient(Graph)(ref Graph graph) { return gradient; } /// ditto
 
-		void backward(ref Parents parents)
+		void backward(Graph)(ref Graph graph)
 		{
 			foreach (i; gradient.indexIterator)
 				gradient[i] = 0;
@@ -531,26 +550,33 @@ struct Add(Parent, AxisIndex[] axes)
 if (isTensor!Parent)
 {
 	alias Parents = AliasSeq!Parent;
-	alias T = typeof(Parent.value).T;
+	alias T = Parent.Value.T;
 	enum name = Parent.name ~ ".add";
 
-	DenseBox!(T, Parent.value.shape.dropAxes(axes)) value;
-	static if (isTrainable!Parent)
-		typeof(value) gradient;
+	alias Value = DenseBox!(T, Parent.Value.shape.dropAxes(axes));
+	private Value value;
+	ref Value getValue(Graph)(ref Graph graph) { return value; } /// ditto
 
-	void forward(ref Parents parents)
+	static if (isTrainable!Parent)
 	{
+		private Value gradient;
+		ref typeof(gradient) getGradient(Graph)(ref Graph graph) { return gradient; } /// ditto
+	}
+
+	void forward(Graph)(ref Graph graph)
+	{
+		auto parent = &graph.tensorInstance!Parent;
 		foreach (ref v; value.valueIterator)
 			v = 0;
-		foreach (i; parents[0].value.indexIterator)
-			value[i.dropAxes!axes] += parents[0].value[i];
+		foreach (i; parent.getValue(graph).indexIterator)
+			value[i.dropAxes!axes] += parent.getValue(graph)[i];
 		debug (drain_verbose)
 		{
 			(ref Parents parents){
 				import std.algorithm;
 				foreach (j; value.indexIterator)
 					writefln("%s: %(%s + %) = %s",
-						j, parents[0].value.indexIterator.filter!(i => i.dropAxes!axes == j).map!(i => parents[0].value[i]),
+						j, parent.getValue(graph).indexIterator.filter!(i => i.dropAxes!axes == j).map!(i => parent.value[i]),
 						value[j],
 					);
 			}(parents);
@@ -558,12 +584,13 @@ if (isTensor!Parent)
 	}
 
 	static if (isTrainable!Parent)
-	void backward(ref Parents parents)
+	void backward(Graph)(ref Graph graph)
 	{
-		foreach (i; parents[0].gradient.indexIterator)
+		auto parent = &graph.tensorInstance!Parent;
+		foreach (i; parent.gradient.indexIterator)
 		{
 			auto j = i.dropAxes!axes;
-			parents[0].gradient[i] += this.gradient[j];
+			parent.gradient[i] += this.gradient[j];
 		}
 		foreach (ref g; this.gradient.valueIterator)
 			g = 0;
@@ -612,26 +639,33 @@ struct Multiply(Parent, AxisIndex axis)
 if (isTensor!Parent)
 {
 	alias Parents = AliasSeq!Parent;
-	alias T = typeof(Parent.value).T;
+	alias T = Parent.Value.T;
 	enum name = Parent.name ~ ".multiply";
 
-	DenseBox!(T, Parent.value.shape.dropAxis(axis)) value;
-	static if (isTrainable!Parent)
-		typeof(value) gradient;
+	alias Value = DenseBox!(T, Parent.Value.shape.dropAxis(axis));
+	private Value value;
+	ref Value getValue(Graph)(ref Graph graph) { return value; } /// ditto
 
-	void forward(ref Parents parents)
+	static if (isTrainable!Parent)
 	{
+		private Value gradient;
+		ref typeof(gradient) getGradient(Graph)(ref Graph graph) { return gradient; } /// ditto
+	}
+
+	void forward(Graph)(ref Graph graph)
+	{
+		auto parent = &graph.tensorInstance!Parent;
 		foreach (ref v; value.valueIterator)
 			v = 1;
-		foreach (i; parents[0].value.indexIterator)
-			value[i.dropAxis!axis] *= parents[0].value[i];
+		foreach (i; parent.value.indexIterator)
+			value[i.dropAxis!axis] *= parent.value[i];
 		debug (drain_verbose)
 		{
 			(ref Parents parents){
 				import std.stdio, std.algorithm;
 				foreach (j; value.indexIterator)
 					writefln("%s: %(%s * %) = %s",
-						j, parents[0].value.indexIterator.filter!(i => i.dropAxis!axis == j).map!(i => parents[0].value[i]),
+						j, parent.value.indexIterator.filter!(i => i.dropAxis!axis == j).map!(i => parent.value[i]),
 						value[j],
 					);
 			}(parents);
@@ -639,22 +673,23 @@ if (isTensor!Parent)
 	}
 
 	static if (isTrainable!Parent)
-	void backward(ref Parents parents)
+	void backward(Graph)(ref Graph graph)
 	{
-		foreach (i; parents[0].gradient.indexIterator)
+		auto parent = &graph.tensorInstance!Parent;
+		foreach (i; parent.gradient.indexIterator)
 		{
 			auto j = i.dropAxis!axis;
 
 			T otherProduct = 1;
-			foreach (row; 0 .. Parent.value.shape.dims[axis])
+			foreach (row; 0 .. Parent.Value.shape.dims[axis])
 				if (row != i[axis])
 				{
 					auto i2 = i;
 					i2[axis] = row;
-					otherProduct *= parents[0].value[i2];
+					otherProduct *= parent.value[i2];
 				}
 
-			parents[0].gradient[i] += this.gradient[j] * otherProduct;
+			parent.gradient[i] += this.gradient[j] * otherProduct;
 		}
 
 		foreach (ref g; this.gradient.valueIterator)
@@ -699,39 +734,48 @@ if (allSatisfy!(isTensor, _Parents))
 {
 	alias Parents = _Parents;
 
-	private alias TensorType(Tensor) = typeof(Tensor.value).T;
-	alias T = CommonType!(staticMap!(TensorType, Parents));
+	private alias TensorValueType(Tensor) = Tensor.Value.T;
+	alias T = CommonType!(staticMap!(TensorValueType, Parents));
 
 	enum name = tensorGroupName!Parents ~ ".concatenate";
 
-	private enum tensorShape(Tensor) = Tensor.value.shape;
+	private enum tensorShape(Tensor) = Tensor.Value.shape;
 	private enum outputShape = Shape.concatenate(axis, staticMap!(tensorShape, Parents));
 
-	DenseBox!(T, outputShape) value;
-	static if (anySatisfy!(isTrainable, Parents))
-		typeof(value) gradient;
+	alias Value = DenseBox!(T, outputShape);
+	private Value value;
+	ref Value getValue(Graph)(ref Graph graph) { return value; } /// ditto
 
-	void forward(ref Parents parents)
+	static if (anySatisfy!(isTrainable, Parents))
+	{
+		private Value gradient;
+		ref typeof(gradient) getGradient(Graph)(ref Graph graph) { return gradient; } /// ditto
+	}
+
+	void forward(Graph)(ref Graph graph) @nogc
 	{
 		size_t offset; // along `axis`
-		foreach (ref parent; parents)
-		{
-			foreach (i; parent.value.indexIterator)
+		static foreach (pi; 0 .. Parents.length) // https://issues.dlang.org/show_bug.cgi?id=21927
+		{{
+			auto parent = &graph.tensorInstance!(Parents[pi]);
+			foreach (i; parent.getValue(this).indexIterator)
 			{
 				auto j = Index!outputShape(i);
 				j[axis] += offset;
 				value[j] = parent.value[i];
 			}
-			offset += parent.value.shape.dims[axis];
-		}
+			enum step = Parents[pi].Value.shape.dims[axis]; // https://issues.dlang.org/show_bug.cgi?id=21871
+			offset += step;
+		}}
 	}
 
 	static if (anySatisfy!(isTrainable, Parents))
-	void backward(ref Parents parents)
+	void backward(Graph)(ref Graph graph)
 	{
 		size_t offset; // along `axis`
-		foreach (ref parent; parents)
-		{
+		static foreach (pi; 0 .. Parents.length) // https://issues.dlang.org/show_bug.cgi?id=21927
+		{{
+			auto parent = &graph.tensorInstance!(Parents[pi]);
 			foreach (i; parent.value.indexIterator)
 			{
 				auto j = Index!outputShape(i);
@@ -741,7 +785,7 @@ if (allSatisfy!(isTensor, _Parents))
 				gradient[j] = 0;
 			}
 			offset += parent.value.shape.dims[axis];
-		}
+		}}
 	}
 
 	static assert(isTensor!(typeof(this)));
@@ -800,29 +844,37 @@ if (isTensor!Parent)
 	alias Parents = AliasSeq!Parent;
 	enum name = Parent.name ~ ".sliceOne";
 
-	private enum outputShape = Parent.value.shape.dropAxis(axis);
+	private enum outputShape = Parent.Value.shape.dropAxis(axis);
 
-	DenseBox!(Parent.value.T, outputShape) value;
-	static if (anySatisfy!(isTrainable, Parents))
-		typeof(value) gradient;
+	alias Value = DenseBox!(Parent.Value.T, outputShape);
+	private Value value;
+	ref Value getValue(Graph)(ref Graph graph) { return value; }
 
-	void forward(ref Parents parents)
+	void forward(Graph)(ref Graph graph)
 	{
-		foreach (i; parents[0].value.indexIterator)
+		auto parent = &graph.tensorInstance!Parent;
+		foreach (i; parent.value.indexIterator)
 			if (i[axis] == index)
-				value[i.dropAxis!axis] = parents[0].value[i];
+				value[i.dropAxis!axis] = parent.value[i];
 	}
 
 	static if (isTrainable!Parent)
-	void backward(ref Parents parents)
 	{
-		foreach (i; parents[0].gradient.indexIterator)
-			if (i[axis] == index)
-			{
-				auto j = i.dropAxis!axis;
-				parents[0].gradient[i] += this.gradient[j];
-				this.gradient[j] = 0;
-			}
+		private Value gradient;
+		ref typeof(gradient) getGradient(Graph)(ref Graph graph) { return gradient; }
+
+		void backward(Graph)(ref Graph graph)
+		{
+			auto parent = &graph.tensorInstance!Parent;
+
+			foreach (i; parent.gradient.indexIterator)
+				if (i[axis] == index)
+				{
+					auto j = i.dropAxis!axis;
+					parent.gradient[i] += this.gradient[j];
+					this.gradient[j] = 0;
+				}
+		}
 	}
 
 	static assert(isTensor!(typeof(this)));
@@ -846,21 +898,26 @@ if (isTensor!Parent)
 	alias Parents = AliasSeq!Parent;
 	enum name = Parent.name ~ ".repeat";
 
-	typeof(shapes.repeat!(shape, where)(Parent.value)) value;
+	alias Value = typeof(shapes.repeat!(shape, where)(Parent.Value.init));
+	private Value value;
+	ref Value getValue(Graph)(ref Graph graph) { return value; } /// ditto
 
-	void forward(ref Parents parents)
+	void forward(Graph)(ref Graph graph)
 	{
-		value.value = parents[0].value;
+		auto parent = &graph.tensorInstance!Parent;
+		value.value = parent.getValue(graph);
 	}
 
 	static if (isTrainable!Parent)
 	{
-		typeof(value) gradient;
+		private Value gradient;
+		ref typeof(gradient) getGradient(Graph)(ref Graph graph) { return gradient; } /// ditto
 
-		void backward(ref Parents parents)
+		void backward(Graph)(ref Graph graph)
 		{
-			foreach (i; parents[0].gradient.indexIterator)
-				parents[0].gradient[i] += this.gradient.value[i];
+			auto parent = &graph.tensorInstance!Parent;
+			foreach (i; parent.gradient.indexIterator)
+				parent.gradient[i] += this.gradient.value[i];
 			foreach (ref g; this.gradient.value.valueIterator)
 				g = 0;
 		}
@@ -892,19 +949,24 @@ if (isTensor!Parent)
 	alias Parents = AliasSeq!Parent;
 	enum name = Parent.name ~ ".swapAxes";
 
-	shapes.SwapAxes!(typeof(Parent.value), axis1, axis2) value;
+	alias Value = shapes.SwapAxes!(Parent.Value, axis1, axis2);
+	private Value value;
+	ref Value getValue(Graph)(ref Graph graph) { return value; }
 
-	void forward(ref Parents parents)
+	void forward(Graph)(ref Graph graph)
 	{
-		value.value = parents[0].value;
+		auto parent = &graph.tensorInstance!Parent;
+		value.value = parent.value;
 	}
 
 	static if (isTrainable!Parent)
 	{
-		typeof(value) gradient;
+		private Value gradient;
+		ref typeof(gradient) getGradient(Graph)(ref Graph graph) { return gradient; }
 
-		void backward(ref Parents parents)
+		void backward(Graph)(ref Graph graph)
 		{
+			auto parent = &graph.tensorInstance!Parent;
 			foreach (i; parents[0].gradient.indexIterator)
 				parents[0].gradient[i] += this.gradient[i.swapAxes!(axis1, axis2)];
 			foreach (ref g; this.gradient.value.valueIterator)
@@ -933,11 +995,11 @@ auto linearDense(Shape outputShape, AxisIndex firstAxis = 1, Parent)(Parent pare
 	// Divide input dimensions according to those which will be
 	// preserved (e.g. the batch size) and those that will be
 	// transformed.  By default, assume first axis is the batch size.
-	enum batchShape = Shape(Parent.value.shape.dims[0 .. firstAxis]);
-	enum inputShape = Shape(Parent.value.shape.dims[firstAxis .. $]);
+	enum batchShape = Shape(Parent.Value.shape.dims[0 .. firstAxis]);
+	enum inputShape = Shape(Parent.Value.shape.dims[firstAxis .. $]);
 
-	auto weights = Variable!(DenseBox!(Parent.value.T, Shape(outputShape.dims ~ inputShape.dims)), Parent.name ~ ".dense-weights")();
-	auto biases  = Variable!(DenseBox!(Parent.value.T, outputShape                              ), Parent.name ~ ".dense-biases" )();
+	auto weights = Variable!(DenseBox!(Parent.Value.T, Shape(outputShape.dims ~ inputShape.dims)), Parent.name ~ ".dense-weights")();
+	auto biases  = Variable!(DenseBox!(Parent.Value.T, outputShape                              ), Parent.name ~ ".dense-biases" )();
 	return
 		concatenate(
 			concatenate(
@@ -996,30 +1058,36 @@ template Unary(alias forwardFunc, alias backwardFunc, string _name)
 	if (isTensor!Parent)
 	{
 		alias Parents = AliasSeq!Parent;
-		alias T = typeof(Parent.value).T;
 		enum name = Parent.name ~ "." ~ _name;
 
-		typeof(Parent.value) value;
-		static if (isTrainable!Parent)
-			typeof(value) gradient;
+		alias Value = Parent.Value;
+		private Value value;
+		ref Value getValue(Graph)(ref Graph graph) { return value; } /// ditto
 
-		void forward(ref Parents parents)
+		void forward(Graph)(ref Graph graph)
 		{
-			foreach (i; parents[0].value.indexIterator)
+			auto parent = &graph.tensorInstance!Parent;
+			foreach (i; parent.value.indexIterator)
 			{
-				value[i] = forwardFunc(parents[0].value[i]);
+				value[i] = forwardFunc(parent.value[i]);
 				debug (drain_verbose)
 					writefln("%s: %s(%s) = %s", i, _name, parents[0].value[i], value[i]);
 			}
 		}
 
 		static if (isTrainable!Parent)
-		void backward(ref Parents parents)
 		{
-			foreach (i; gradient.indexIterator)
-				parents[0].gradient[i] += backwardFunc(parents[0].value[i], this.value[i], this.gradient[i]);
-			foreach (ref g; this.gradient.valueIterator)
-				g = 0;
+			private Value gradient;
+			ref typeof(gradient) getGradient(Graph)(ref Graph graph) { return gradient; }
+
+			void backward(Graph)(ref Graph graph)
+			{
+				auto parent = &graph.tensorInstance!Parent;
+				foreach (i; gradient.indexIterator)
+					parent.gradient[i] += backwardFunc(parent.value[i], this.value[i], this.gradient[i]);
+				foreach (ref g; this.gradient.valueIterator)
+					g = 0;
+			}
 		}
 
 		static assert(isTensor!(typeof(this)));
@@ -1257,21 +1325,25 @@ if (isTensor!Parent)
 	enum numRoles = /*enumLength!Role*/ 2;
 
 	static assert(aggregationAxis < roleAxis);
-	static assert(Parent.value.shape.dims[roleAxis] == numRoles);
+	static assert(Parent.Value.shape.dims[roleAxis] == numRoles);
 	private enum axes = [aggregationAxis, roleAxis];
-	enum Shape shape = Parent.value.shape.dropAxes(axes);
-	DenseBox!(Parent.value.T, shape) value;
+	enum Shape shape = Parent.Value.shape.dropAxes(axes);
 
-	void forward(ref Parents parents)
+	alias Value = DenseBox!(Parent.Value.T, shape);
+	private Value value;
+	ref Value getValue(Graph)(ref Graph graph) { return value; } /// ditto
+
+	void forward(Graph)(ref Graph graph)
 	{
-	//	auto values  = parents[0].value.byRef.sliceOne!(roleAxis, Role.value);
-		auto weights = parents[0].value.byRef.sliceOne!(roleAxis, Role.weight);
+		auto parent = &graph.tensorInstance!Parent;
+	//	auto values  = parent.value.byRef.sliceOne!(roleAxis, Role.value);
+		auto weights = parent.value.byRef.sliceOne!(roleAxis, Role.weight);
 
-		DenseBox!(Parent.value.T, shape) weightsSum = weights.fold!aggregationAxis(sum);
+		DenseBox!(Parent.Value.T, shape) weightsSum = weights.fold!aggregationAxis(sum);
 
 		foreach (ref v; value.valueIterator)
 			v = 0;
-		foreach (i; parents[0].value.indexIterator)
+		foreach (i; parent.value.indexIterator)
 		{
 			auto role = i[roleAxis];
 			if (role != Role.weight)
@@ -1279,8 +1351,8 @@ if (isTensor!Parent)
 
 			auto iValue = i; iValue[roleAxis] = Role.value;
 
-			auto weight = parents[0].value[i];
-			auto value = parents[0].value[iValue];
+			auto weight = parent.value[i];
+			auto value = parent.value[iValue];
 
 			auto j = i.dropAxis!roleAxis;
 			auto k = j.dropAxis!aggregationAxis;
@@ -1291,18 +1363,20 @@ if (isTensor!Parent)
 
 	static if (isTrainable!Parent)
 	{
-		typeof(value) gradient;
+		private Value gradient;
+		ref typeof(gradient) getGradient(Graph)(ref Graph graph) { return gradient; }
 
-		void backward(ref Parents parents)
+		void backward(Graph)(ref Graph graph)
 		{
-		//	auto values  = parents[0].value.byRef.sliceOne!(roleAxis, Role.value);
-			auto weights = parents[0].value.byRef.sliceOne!(roleAxis, Role.weight);
+			auto parent = &graph.tensorInstance!Parent;
+		//	auto values  = parent.value.byRef.sliceOne!(roleAxis, Role.value);
+			auto weights = parent.value.byRef.sliceOne!(roleAxis, Role.weight);
 
-			DenseBox!(Parent.value.T, shape) weightsSum = weights.fold!aggregationAxis(sum);
+			DenseBox!(Parent.Value.T, shape) weightsSum = weights.fold!aggregationAxis(sum);
 
 			// Calculate `weight * value` (intermediate result)
-			DenseBox!(Parent.value.T, Parent.value.shape.dropAxis(roleAxis)) weightsValuesProd;
-			foreach (i; parents[0].value.indexIterator)
+			DenseBox!(Parent.Value.T, Parent.Value.shape.dropAxis(roleAxis)) weightsValuesProd;
+			foreach (i; parent.value.indexIterator)
 			{
 				auto role = i[roleAxis];
 				if (role != Role.weight)
@@ -1310,11 +1384,11 @@ if (isTensor!Parent)
 				auto iWeight = i;
 				auto iValue = i; iValue[roleAxis] = Role.value;
 				auto j = i.dropAxis!roleAxis;
-				weightsValuesProd[j] = parents[0].value[iValue] * weights[j];
+				weightsValuesProd[j] = parent.value[iValue] * weights[j];
 			}
-			DenseBox!(Parent.value.T, shape) weightsValuesProdSum = weightsValuesProd.fold!aggregationAxis(sum);
+			DenseBox!(Parent.Value.T, shape) weightsValuesProdSum = weightsValuesProd.fold!aggregationAxis(sum);
 
-			foreach (i; parents[0].value.indexIterator)
+			foreach (i; parent.value.indexIterator)
 			{
 				auto j = i.dropAxis!roleAxis;
 				auto k = j.dropAxis!aggregationAxis;
@@ -1323,13 +1397,13 @@ if (isTensor!Parent)
 				final switch (role)
 				{
 					case Role.value:
-						parents[0].gradient[i] += gradient[k] * weights[j] / (weightsSum[k] + value.T.epsilon);
+						parent.gradient[i] += gradient[k] * weights[j] / (weightsSum[k] + value.T.epsilon);
 						break;
 
 					case Role.weight:
 					{
 						auto iValue = i; iValue[roleAxis] = Role.value;
-						auto value = parents[0].value[iValue];
+						auto value = parent.value[iValue];
 
 						auto g = - (weightsSum[k] - weights[j]) * value;
 						g += weightsValuesProdSum[k] - (value * weights[j]);
@@ -1339,7 +1413,7 @@ if (isTensor!Parent)
 						if (g != g) // nan
 							g = 0;
 
-						parents[0].gradient[i] += g;
+						parent.gradient[i] += g;
 
 						break;
 					}
@@ -1438,28 +1512,32 @@ if (isTensor!Parent)
 	enum numRoles = /*enumLength!Role*/ 2;
 
 	static assert(aggregationAxis < roleAxis);
-	static assert(Parent.value.shape.dims[roleAxis] == numRoles);
+	static assert(Parent.Value.shape.dims[roleAxis] == numRoles);
 	private enum axes = [aggregationAxis, roleAxis];
-	enum Shape shape = Parent.value.shape.dropAxes(axes);
-	DenseBox!(Parent.value.T, shape) value;
+	enum Shape shape = Parent.Value.shape.dropAxes(axes);
 
-	void forward(ref Parents parents)
+	alias Value = DenseBox!(Parent.Value.T, shape);
+	private Value value;
+	ref Value getValue(Graph)(ref Graph graph) { return value; } /// ditto
+
+	void forward(Graph)(ref Graph graph)
 	{
-		DenseBox!(Parent.value.T, Parent.value.shape.dropAxis(roleAxis)) weightsExp;
-		foreach (i; parents[0].value.indexIterator)
+		auto parent = &graph.tensorInstance!Parent;
+		DenseBox!(Parent.Value.T, Parent.Value.shape.dropAxis(roleAxis)) weightsExp;
+		foreach (i; parent.value.indexIterator)
 		{
 			auto role = i[roleAxis];
 			if (role != Role.weight)
 				continue;
 			auto j = i.dropAxis!roleAxis;
-			weightsExp[j] = exp(parents[0].value[i]);
+			weightsExp[j] = exp(parent.value[i]);
 		}
 
-		DenseBox!(Parent.value.T, shape) weightsExpSum = weightsExp.fold!aggregationAxis(sum);
+		DenseBox!(Parent.Value.T, shape) weightsExpSum = weightsExp.fold!aggregationAxis(sum);
 
 		foreach (ref v; value.valueIterator)
 			v = 0;
-		foreach (i; parents[0].value.indexIterator)
+		foreach (i; parent.value.indexIterator)
 		{
 			auto role = i[roleAxis];
 			if (role != Role.weight)
@@ -1467,8 +1545,8 @@ if (isTensor!Parent)
 
 			auto iValue = i; iValue[roleAxis] = Role.value;
 
-			auto weight = parents[0].value[i];
-			auto value = parents[0].value[iValue];
+			auto weight = parent.value[i];
+			auto value = parent.value[iValue];
 
 			auto j = i.dropAxis!roleAxis;
 			auto weightExp = weightsExp[j];
@@ -1481,25 +1559,28 @@ if (isTensor!Parent)
 
 	static if (isTrainable!Parent)
 	{
-		typeof(value) gradient;
+		private Value gradient;
+		ref typeof(gradient) getGradient(Graph)(ref Graph graph) { return gradient; }
 
-		void backward(ref Parents parents)
+		void backward(Graph)(ref Graph graph)
 		{
-			DenseBox!(Parent.value.T, Parent.value.shape.dropAxis(roleAxis)) weightsExp;
-			foreach (i; parents[0].value.indexIterator)
+			auto parent = &graph.tensorInstance!Parent;
+
+			DenseBox!(Parent.Value.T, Parent.Value.shape.dropAxis(roleAxis)) weightsExp;
+			foreach (i; parent.value.indexIterator)
 			{
 				auto role = i[roleAxis];
 				if (role != Role.weight)
 					continue;
 				auto j = i.dropAxis!roleAxis;
-				weightsExp[j] = exp(parents[0].value[i]);
+				weightsExp[j] = exp(parent.value[i]);
 			}
 
-			DenseBox!(Parent.value.T, shape) weightsExpSum = weightsExp.fold!aggregationAxis(sum);
+			DenseBox!(Parent.Value.T, shape) weightsExpSum = weightsExp.fold!aggregationAxis(sum);
 
 			// Calculate `exp(weight) * value` (intermediate result)
-			DenseBox!(Parent.value.T, Parent.value.shape.dropAxis(roleAxis)) weightsExpValuesProd;
-			foreach (i; parents[0].value.indexIterator)
+			DenseBox!(Parent.Value.T, Parent.Value.shape.dropAxis(roleAxis)) weightsExpValuesProd;
+			foreach (i; parent.value.indexIterator)
 			{
 				auto role = i[roleAxis];
 				if (role != Role.weight)
@@ -1507,10 +1588,10 @@ if (isTensor!Parent)
 				auto iWeight = i;
 				auto iValue = i; iValue[roleAxis] = Role.value;
 				auto j = i.dropAxis!roleAxis;
-				weightsExpValuesProd[j] = parents[0].value[iValue] * weightsExp[j];
+				weightsExpValuesProd[j] = parent.value[iValue] * weightsExp[j];
 			}
 
-			foreach (i; parents[0].value.indexIterator)
+			foreach (i; parent.value.indexIterator)
 			{
 				auto j = i.dropAxis!roleAxis;
 				auto k = j.dropAxis!aggregationAxis;
@@ -1519,13 +1600,13 @@ if (isTensor!Parent)
 				final switch (role)
 				{
 					case Role.value:
-						parents[0].gradient[i] += gradient[k] * weightsExp[j] / (weightsExpSum[k] + value.T.epsilon);
+						parent.gradient[i] += gradient[k] * weightsExp[j] / (weightsExpSum[k] + value.T.epsilon);
 						break;
 
 					case Role.weight:
 					{
 						auto iValue = i; iValue[roleAxis] = Role.value;
-						auto value = parents[0].value[iValue];
+						auto value = parent.value[iValue];
 
 						auto g = - (weightsExpSum[k] - weightsExp[j]) * value;
 						g += weightsExpValuesProd[j] - (value * weightsExp[j]);
@@ -1536,7 +1617,7 @@ if (isTensor!Parent)
 						if (g != g) // nan
 							g = 0;
 
-						parents[0].gradient[i] += g;
+						parent.gradient[i] += g;
 
 						break;
 					}
@@ -1572,15 +1653,15 @@ SoftmaxWeightedAverage!(Parent, aggregationAxis, roleAxis) softmaxWeightedAverag
 // 	}
 
 // 	static assert(aggregationAxis < roleAxis);
-// 	static assert(Parent.value.shape.dims[roleAxis] == 2);
+// 	static assert(Parent.Value.shape.dims[roleAxis] == 2);
 // 	enum axes = [aggregationAxis, roleAxis];
-// 	enum Shape shape = Parent.value.shape.dropAxes(axes);
+// 	enum Shape shape = Parent.Value.shape.dropAxes(axes);
 
 // 	auto values  = parent.sliceOne!(roleAxis, Role.value );
 // 	auto weights = parent.sliceOne!(roleAxis, Role.weight);
 // 	auto weightsExp = weights.exp;
 
-// 	enum inputSize = Parent.value.shape.dims[aggregationAxis];
+// 	enum inputSize = Parent.Value.shape.dims[aggregationAxis];
 
 // 	return
 // 		concatenate(
