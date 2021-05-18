@@ -371,9 +371,11 @@ struct Graph(Optimizer, Outputs...)
 		// by the tensors' individual `backward` methods.
 		foreach_reverse (ti, ref tensor; tensors)
 		{
-			static if (.isTrainable!(typeof(tensor)))
+			static if (__traits(hasMember, typeof(tensor), q{gradient}))
 				foreach (ref g; tensor.gradient.valueIterator)
 					g = 0;
+			static if (.isTrainable!(typeof(tensor)))
+				tensor.backward(this); // Flush downwards
 		}
 
 		this.optimizer = optimizer.initialize(tensors);
@@ -576,7 +578,7 @@ if (isTensor!Parent)
 				import std.algorithm;
 				foreach (j; value.indexIterator)
 					writefln("%s: %(%s + %) = %s",
-						j, parent.getValue(graph).indexIterator.filter!(i => i.dropAxes!axes == j).map!(i => parent.value[i]),
+						j, parent.getValue(graph).indexIterator.filter!(i => i.dropAxes!axes == j).map!(i => parent.getValue(graph)[i]),
 						value[j],
 					);
 			}(parents);
@@ -587,10 +589,10 @@ if (isTensor!Parent)
 	void backward(Graph)(ref Graph graph)
 	{
 		auto parent = &graph.tensorInstance!Parent;
-		foreach (i; parent.gradient.indexIterator)
+		foreach (i; parent.getGradient(graph).indexIterator)
 		{
 			auto j = i.dropAxes!axes;
-			parent.gradient[i] += this.gradient[j];
+			parent.getGradient(graph)[i] += this.gradient[j];
 		}
 		foreach (ref g; this.gradient.valueIterator)
 			g = 0;
@@ -657,15 +659,15 @@ if (isTensor!Parent)
 		auto parent = &graph.tensorInstance!Parent;
 		foreach (ref v; value.valueIterator)
 			v = 1;
-		foreach (i; parent.value.indexIterator)
-			value[i.dropAxis!axis] *= parent.value[i];
+		foreach (i; parent.getValue(graph).indexIterator)
+			value[i.dropAxis!axis] *= parent.getValue(graph)[i];
 		debug (drain_verbose)
 		{
 			(ref Parents parents){
 				import std.stdio, std.algorithm;
 				foreach (j; value.indexIterator)
 					writefln("%s: %(%s * %) = %s",
-						j, parent.value.indexIterator.filter!(i => i.dropAxis!axis == j).map!(i => parent.value[i]),
+						j, parent.getValue(graph).indexIterator.filter!(i => i.dropAxis!axis == j).map!(i => parent.getValue(graph)[i]),
 						value[j],
 					);
 			}(parents);
@@ -676,7 +678,7 @@ if (isTensor!Parent)
 	void backward(Graph)(ref Graph graph)
 	{
 		auto parent = &graph.tensorInstance!Parent;
-		foreach (i; parent.gradient.indexIterator)
+		foreach (i; parent.getGradient(graph).indexIterator)
 		{
 			auto j = i.dropAxis!axis;
 
@@ -686,10 +688,10 @@ if (isTensor!Parent)
 				{
 					auto i2 = i;
 					i2[axis] = row;
-					otherProduct *= parent.value[i2];
+					otherProduct *= parent.getValue(graph)[i2];
 				}
 
-			parent.gradient[i] += this.gradient[j] * otherProduct;
+			parent.getGradient(graph)[i] += this.gradient[j] * otherProduct;
 		}
 
 		foreach (ref g; this.gradient.valueIterator)
@@ -758,11 +760,11 @@ if (allSatisfy!(isTensor, _Parents))
 		static foreach (pi; 0 .. Parents.length) // https://issues.dlang.org/show_bug.cgi?id=21927
 		{{
 			auto parent = &graph.tensorInstance!(Parents[pi]);
-			foreach (i; parent.getValue(this).indexIterator)
+			foreach (i; parent.getValue(graph).indexIterator)
 			{
 				auto j = Index!outputShape(i);
 				j[axis] += offset;
-				value[j] = parent.value[i];
+				value[j] = parent.getValue(graph)[i];
 			}
 			enum step = Parents[pi].Value.shape.dims[axis]; // https://issues.dlang.org/show_bug.cgi?id=21871
 			offset += step;
@@ -776,15 +778,16 @@ if (allSatisfy!(isTensor, _Parents))
 		static foreach (pi; 0 .. Parents.length) // https://issues.dlang.org/show_bug.cgi?id=21927
 		{{
 			auto parent = &graph.tensorInstance!(Parents[pi]);
-			foreach (i; parent.value.indexIterator)
+			foreach (i; parent.getValue(graph).indexIterator)
 			{
 				auto j = Index!outputShape(i);
 				j[axis] += offset;
 				static if (isTrainable!(typeof(parent)))
-					parent.gradient[i] += gradient[j];
+					parent.getGradient(graph)[i] += gradient[j];
 				gradient[j] = 0;
 			}
-			offset += parent.value.shape.dims[axis];
+			enum step = Parents[pi].Value.shape.dims[axis]; // https://issues.dlang.org/show_bug.cgi?id=21871
+			offset += step;
 		}}
 	}
 
@@ -853,9 +856,9 @@ if (isTensor!Parent)
 	void forward(Graph)(ref Graph graph)
 	{
 		auto parent = &graph.tensorInstance!Parent;
-		foreach (i; parent.value.indexIterator)
+		foreach (i; parent.getValue(graph).indexIterator)
 			if (i[axis] == index)
-				value[i.dropAxis!axis] = parent.value[i];
+				value[i.dropAxis!axis] = parent.getValue(graph)[i];
 	}
 
 	static if (isTrainable!Parent)
@@ -867,11 +870,11 @@ if (isTensor!Parent)
 		{
 			auto parent = &graph.tensorInstance!Parent;
 
-			foreach (i; parent.gradient.indexIterator)
+			foreach (i; parent.getGradient(graph).indexIterator)
 				if (i[axis] == index)
 				{
 					auto j = i.dropAxis!axis;
-					parent.gradient[i] += this.gradient[j];
+					parent.getGradient(graph)[i] += this.gradient[j];
 					this.gradient[j] = 0;
 				}
 		}
@@ -916,8 +919,8 @@ if (isTensor!Parent)
 		void backward(Graph)(ref Graph graph)
 		{
 			auto parent = &graph.tensorInstance!Parent;
-			foreach (i; parent.gradient.indexIterator)
-				parent.gradient[i] += this.gradient.value[i];
+			foreach (i; parent.getGradient(graph).indexIterator)
+				parent.getGradient(graph)[i] += this.gradient.value[i];
 			foreach (ref g; this.gradient.value.valueIterator)
 				g = 0;
 		}
@@ -956,7 +959,7 @@ if (isTensor!Parent)
 	void forward(Graph)(ref Graph graph)
 	{
 		auto parent = &graph.tensorInstance!Parent;
-		value.value = parent.value;
+		value.value = parent.getValue(graph);
 	}
 
 	static if (isTrainable!Parent)
@@ -1067,11 +1070,11 @@ template Unary(alias forwardFunc, alias backwardFunc, string _name)
 		void forward(Graph)(ref Graph graph)
 		{
 			auto parent = &graph.tensorInstance!Parent;
-			foreach (i; parent.value.indexIterator)
+			foreach (i; parent.getValue(graph).indexIterator)
 			{
-				value[i] = forwardFunc(parent.value[i]);
+				value[i] = forwardFunc(parent.getValue(graph)[i]);
 				debug (drain_verbose)
-					writefln("%s: %s(%s) = %s", i, _name, parents[0].value[i], value[i]);
+					writefln("%s: %s(%s) = %s", i, _name, parents[0].getValue(graph)[i], value[i]);
 			}
 		}
 
@@ -1084,7 +1087,7 @@ template Unary(alias forwardFunc, alias backwardFunc, string _name)
 			{
 				auto parent = &graph.tensorInstance!Parent;
 				foreach (i; gradient.indexIterator)
-					parent.gradient[i] += backwardFunc(parent.value[i], this.value[i], this.gradient[i]);
+					parent.getGradient(graph)[i] += backwardFunc(parent.getValue(graph)[i], this.value[i], this.gradient[i]);
 				foreach (ref g; this.gradient.valueIterator)
 					g = 0;
 			}
@@ -1158,8 +1161,9 @@ private void testProblem(Graph, Input, Output, size_t numObservations)(
 	assert(inputs.length == labels.length);
 
 	foreach (ref tensor; graph.tensors)
-		foreach (ref v; tensor.value.valueIterator)
-			v = uniform01!float;
+		static if (__traits(hasMember, typeof(tensor), q{value}))
+			foreach (ref v; tensor.value.valueIterator)
+				v = uniform01!float;
 
 	foreach (epoch; 0 .. 1024 * 4 / numObservations)
 	{
@@ -1336,14 +1340,14 @@ if (isTensor!Parent)
 	void forward(Graph)(ref Graph graph)
 	{
 		auto parent = &graph.tensorInstance!Parent;
-	//	auto values  = parent.value.byRef.sliceOne!(roleAxis, Role.value);
-		auto weights = parent.value.byRef.sliceOne!(roleAxis, Role.weight);
+	//	auto values  = parent.getValue(graph).byRef.sliceOne!(roleAxis, Role.value);
+		auto weights = parent.getValue(graph).byRef.sliceOne!(roleAxis, Role.weight);
 
 		DenseBox!(Parent.Value.T, shape) weightsSum = weights.fold!aggregationAxis(sum);
 
 		foreach (ref v; value.valueIterator)
 			v = 0;
-		foreach (i; parent.value.indexIterator)
+		foreach (i; parent.getValue(graph).indexIterator)
 		{
 			auto role = i[roleAxis];
 			if (role != Role.weight)
@@ -1351,8 +1355,8 @@ if (isTensor!Parent)
 
 			auto iValue = i; iValue[roleAxis] = Role.value;
 
-			auto weight = parent.value[i];
-			auto value = parent.value[iValue];
+			auto weight = parent.getValue(graph)[i];
+			auto value = parent.getValue(graph)[iValue];
 
 			auto j = i.dropAxis!roleAxis;
 			auto k = j.dropAxis!aggregationAxis;
@@ -1369,14 +1373,14 @@ if (isTensor!Parent)
 		void backward(Graph)(ref Graph graph)
 		{
 			auto parent = &graph.tensorInstance!Parent;
-		//	auto values  = parent.value.byRef.sliceOne!(roleAxis, Role.value);
-			auto weights = parent.value.byRef.sliceOne!(roleAxis, Role.weight);
+		//	auto values  = parent.getValue(graph).byRef.sliceOne!(roleAxis, Role.value);
+			auto weights = parent.getValue(graph).byRef.sliceOne!(roleAxis, Role.weight);
 
 			DenseBox!(Parent.Value.T, shape) weightsSum = weights.fold!aggregationAxis(sum);
 
 			// Calculate `weight * value` (intermediate result)
 			DenseBox!(Parent.Value.T, Parent.Value.shape.dropAxis(roleAxis)) weightsValuesProd;
-			foreach (i; parent.value.indexIterator)
+			foreach (i; parent.getValue(graph).indexIterator)
 			{
 				auto role = i[roleAxis];
 				if (role != Role.weight)
@@ -1384,11 +1388,11 @@ if (isTensor!Parent)
 				auto iWeight = i;
 				auto iValue = i; iValue[roleAxis] = Role.value;
 				auto j = i.dropAxis!roleAxis;
-				weightsValuesProd[j] = parent.value[iValue] * weights[j];
+				weightsValuesProd[j] = parent.getValue(graph)[iValue] * weights[j];
 			}
 			DenseBox!(Parent.Value.T, shape) weightsValuesProdSum = weightsValuesProd.fold!aggregationAxis(sum);
 
-			foreach (i; parent.value.indexIterator)
+			foreach (i; parent.getValue(graph).indexIterator)
 			{
 				auto j = i.dropAxis!roleAxis;
 				auto k = j.dropAxis!aggregationAxis;
@@ -1397,13 +1401,13 @@ if (isTensor!Parent)
 				final switch (role)
 				{
 					case Role.value:
-						parent.gradient[i] += gradient[k] * weights[j] / (weightsSum[k] + value.T.epsilon);
+						parent.getGradient(graph)[i] += gradient[k] * weights[j] / (weightsSum[k] + value.T.epsilon);
 						break;
 
 					case Role.weight:
 					{
 						auto iValue = i; iValue[roleAxis] = Role.value;
-						auto value = parent.value[iValue];
+						auto value = parent.getValue(graph)[iValue];
 
 						auto g = - (weightsSum[k] - weights[j]) * value;
 						g += weightsValuesProdSum[k] - (value * weights[j]);
@@ -1413,7 +1417,7 @@ if (isTensor!Parent)
 						if (g != g) // nan
 							g = 0;
 
-						parent.gradient[i] += g;
+						parent.getGradient(graph)[i] += g;
 
 						break;
 					}
@@ -1524,20 +1528,20 @@ if (isTensor!Parent)
 	{
 		auto parent = &graph.tensorInstance!Parent;
 		DenseBox!(Parent.Value.T, Parent.Value.shape.dropAxis(roleAxis)) weightsExp;
-		foreach (i; parent.value.indexIterator)
+		foreach (i; parent.getValue(graph).indexIterator)
 		{
 			auto role = i[roleAxis];
 			if (role != Role.weight)
 				continue;
 			auto j = i.dropAxis!roleAxis;
-			weightsExp[j] = exp(parent.value[i]);
+			weightsExp[j] = exp(parent.getValue(graph)[i]);
 		}
 
 		DenseBox!(Parent.Value.T, shape) weightsExpSum = weightsExp.fold!aggregationAxis(sum);
 
 		foreach (ref v; value.valueIterator)
 			v = 0;
-		foreach (i; parent.value.indexIterator)
+		foreach (i; parent.getValue(graph).indexIterator)
 		{
 			auto role = i[roleAxis];
 			if (role != Role.weight)
@@ -1545,8 +1549,8 @@ if (isTensor!Parent)
 
 			auto iValue = i; iValue[roleAxis] = Role.value;
 
-			auto weight = parent.value[i];
-			auto value = parent.value[iValue];
+			auto weight = parent.getValue(graph)[i];
+			auto value = parent.getValue(graph)[iValue];
 
 			auto j = i.dropAxis!roleAxis;
 			auto weightExp = weightsExp[j];
@@ -1567,20 +1571,20 @@ if (isTensor!Parent)
 			auto parent = &graph.tensorInstance!Parent;
 
 			DenseBox!(Parent.Value.T, Parent.Value.shape.dropAxis(roleAxis)) weightsExp;
-			foreach (i; parent.value.indexIterator)
+			foreach (i; parent.getValue(graph).indexIterator)
 			{
 				auto role = i[roleAxis];
 				if (role != Role.weight)
 					continue;
 				auto j = i.dropAxis!roleAxis;
-				weightsExp[j] = exp(parent.value[i]);
+				weightsExp[j] = exp(parent.getValue(graph)[i]);
 			}
 
 			DenseBox!(Parent.Value.T, shape) weightsExpSum = weightsExp.fold!aggregationAxis(sum);
 
 			// Calculate `exp(weight) * value` (intermediate result)
 			DenseBox!(Parent.Value.T, Parent.Value.shape.dropAxis(roleAxis)) weightsExpValuesProd;
-			foreach (i; parent.value.indexIterator)
+			foreach (i; parent.getValue(graph).indexIterator)
 			{
 				auto role = i[roleAxis];
 				if (role != Role.weight)
@@ -1588,10 +1592,10 @@ if (isTensor!Parent)
 				auto iWeight = i;
 				auto iValue = i; iValue[roleAxis] = Role.value;
 				auto j = i.dropAxis!roleAxis;
-				weightsExpValuesProd[j] = parent.value[iValue] * weightsExp[j];
+				weightsExpValuesProd[j] = parent.getValue(graph)[iValue] * weightsExp[j];
 			}
 
-			foreach (i; parent.value.indexIterator)
+			foreach (i; parent.getValue(graph).indexIterator)
 			{
 				auto j = i.dropAxis!roleAxis;
 				auto k = j.dropAxis!aggregationAxis;
@@ -1600,13 +1604,13 @@ if (isTensor!Parent)
 				final switch (role)
 				{
 					case Role.value:
-						parent.gradient[i] += gradient[k] * weightsExp[j] / (weightsExpSum[k] + value.T.epsilon);
+						parent.getGradient(graph)[i] += gradient[k] * weightsExp[j] / (weightsExpSum[k] + value.T.epsilon);
 						break;
 
 					case Role.weight:
 					{
 						auto iValue = i; iValue[roleAxis] = Role.value;
-						auto value = parent.value[iValue];
+						auto value = parent.getValue(graph)[iValue];
 
 						auto g = - (weightsExpSum[k] - weightsExp[j]) * value;
 						g += weightsExpValuesProd[j] - (value * weightsExp[j]);
@@ -1617,7 +1621,7 @@ if (isTensor!Parent)
 						if (g != g) // nan
 							g = 0;
 
-						parent.gradient[i] += g;
+						parent.getGradient(graph)[i] += g;
 
 						break;
 					}
